@@ -1,1 +1,1 @@
-web: cd tiketon && gunicorn tiketon.wsgi --log-file - 
+web: gunicorn --chdir tiketon tiketon.wsgi:application --log-file - 
