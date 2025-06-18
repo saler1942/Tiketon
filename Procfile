@@ -1,0 +1,1 @@
+web: cd tiketon && gunicorn tiketon.wsgi --log-file - 
