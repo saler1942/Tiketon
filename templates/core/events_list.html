@@ -1,0 +1,78 @@
+{% extends 'base.html' %}
+
+{% block title %}Мероприятия | Тикетон{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-3">
+    <h1>Мероприятия</h1>
+    <div class="flex gap-2">
+        <a href="{% url 'export_all_events' %}" class="btn btn-secondary">Экспорт всех в Excel</a>
+        <a href="{% url 'event_create' %}" class="btn btn-primary">+ Новое мероприятие</a>
+    </div>
+</div>
+
+<form method="get" class="card mb-3" style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: end;">
+    <div style="flex:1; min-width: 180px;">
+        <label for="q">Поиск по названию</label>
+        <input type="text" id="q" name="q" class="form-control" value="{{ q|default:'' }}" placeholder="Название мероприятия">
+    </div>
+    <div style="min-width: 150px;">
+        <label for="date_from">Дата от</label>
+        <input type="date" id="date_from" name="date_from" class="form-control" value="{{ date_from|default:'' }}">
+    </div>
+    <div style="min-width: 150px;">
+        <label for="date_to">Дата до</label>
+        <input type="date" id="date_to" name="date_to" class="form-control" value="{{ date_to|default:'' }}">
+    </div>
+    <div style="flex:1; min-width: 180px;">
+        <label for="leader">Тимлидер</label>
+        <input type="text" id="leader" name="leader" class="form-control" value="{{ leader|default:'' }}" placeholder="Имя или фамилия">
+    </div>
+    <div style="min-width: 120px;">
+        <button type="submit" class="btn btn-primary" style="width: 100%;">Найти</button>
+    </div>
+</form>
+
+{% if events %}
+<div class="card">
+    {% for event in events %}
+    <div class="event-item {% if not forloop.last %}mb-3{% endif %}" style="padding: 1rem; border-bottom: 1px solid var(--gray-color); {% if forloop.last %}border-bottom: none;{% endif %}">
+        <div class="flex justify-between items-center">
+            <div>
+                <h2 class="mb-1">{{ event.name }}</h2>
+                <div class="text-sm" style="color: #666;">
+                    <span class="mr-1">Дата: {{ event.date }}</span>
+                    <span class="mr-1">•</span>
+                    <span>Тимлидер: {{ event.leader.first_name }} {{ event.leader.last_name }}</span>
+                    <span class="mr-1">•</span>
+                    <span>Требуется волонтёров: {{ event.volunteers_required }}</span>
+                </div>
+            </div>
+            <a href="{% url 'event_edit' event.id %}" class="btn btn-secondary">Управление</a>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="flex justify-center mt-3">
+    <nav aria-label="Пагинация">
+        <ul class="pagination" style="display: flex; gap: 0.5rem; list-style: none; padding: 0;">
+            {% if page_obj.has_previous %}
+                <li><a href="?{% if q %}q={{ q }}&{% endif %}{% if date_from %}date_from={{ date_from }}&{% endif %}{% if date_to %}date_to={{ date_to }}&{% endif %}{% if leader %}leader={{ leader }}&{% endif %}page={{ page_obj.previous_page_number }}" class="btn btn-secondary">&laquo; Назад</a></li>
+            {% endif %}
+            <li style="padding: 0.5rem 1rem;">Стр. {{ page_obj.number }} из {{ page_obj.paginator.num_pages }}</li>
+            {% if page_obj.has_next %}
+                <li><a href="?{% if q %}q={{ q }}&{% endif %}{% if date_from %}date_from={{ date_from }}&{% endif %}{% if date_to %}date_to={{ date_to }}&{% endif %}{% if leader %}leader={{ leader }}&{% endif %}page={{ page_obj.next_page_number }}" class="btn btn-secondary">Вперёд &raquo;</a></li>
+            {% endif %}
+        </ul>
+    </nav>
+</div>
+{% else %}
+<div class="card" style="text-align: center; padding: 3rem 1rem;">
+    <div style="font-size: 3rem; color: #ccc; margin-bottom: 1rem;">📅</div>
+    <h2>Нет мероприятий по заданным условиям</h2>
+    <p class="mb-3" style="color: #666;">Измените фильтры или создайте новое мероприятие</p>
+    <a href="{% url 'event_create' %}" class="btn btn-primary">Создать мероприятие</a>
+</div>
+{% endif %}
+{% endblock %} 

@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+
+{% block title %}Подтверждение входа | Тикетон{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 400px; margin: 3rem auto;">
+    <h1 style="text-align: center; margin-bottom: 2rem;">Подтверждение входа</h1>
+    
+    <p class="mb-3" style="text-align: center; color: #555;">
+        Мы отправили код подтверждения на ваш email.<br>
+        Введите его, чтобы войти в систему.
+    </p>
+    
+    {% if error %}
+    <div class="alert alert-danger mb-3" style="color: var(--danger-color); padding: 0.75rem; background: #fff1f1; border-radius: 4px; margin-bottom: 1rem;">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="post">
+        {% csrf_token %}
+        <div class="form-group">
+            <label for="code">Код подтверждения</label>
+            <input id="code" name="code" type="text" class="form-control" placeholder="123456" required autofocus>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width: 100%;">Подтвердить</button>
+    </form>
+</div>
+{% endblock %} 

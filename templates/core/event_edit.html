@@ -1,0 +1,176 @@
+{% extends 'base.html' %}
+{% load custom_filters %}
+
+{% block title %}{{ event.name }} | Тикетон{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-3">
+    <h1>{{ event.name }}</h1>
+    <div class="flex gap-2">
+        <a href="{% url 'event_export' event.id %}" class="btn btn-secondary">Экспорт в Excel</a>
+        <a href="{% url 'events' %}" class="btn btn-secondary">← Назад к мероприятиям</a>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <h2>Информация о мероприятии</h2>
+    <div class="flex mb-2">
+        <div style="flex: 1;">
+            <strong>Дата:</strong> {{ event.date }}
+        </div>
+        <div style="flex: 1;">
+            <strong>Требуется волонтёров:</strong> {{ event.volunteers_required }}
+        </div>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <h2 class="mb-2">Добавление волонтёров</h2>
+    <form id="add-volunteer-form" method="post" class="search-container mb-2">
+        {% csrf_token %}
+        <div class="flex gap-2">
+            <input id="volunteer-search" type="text" class="form-control" placeholder="Поиск волонтёра по имени или email" autocomplete="off" style="flex:1">
+            <input type="hidden" name="volunteer_id" id="volunteer-id">
+            <button name="add_volunteer" class="btn btn-primary" disabled id="add-volunteer-btn">Добавить волонтёра</button>
+        </div>
+        <div id="volunteer-results" class="search-results" style="display:none;"></div>
+    </form>
+</div>
+
+<div class="card mb-3">
+    <h2 class="mb-2">Участники мероприятия</h2>
+    {% if participants %}
+    <form method="post">
+        {% csrf_token %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Волонтёр</th>
+                    <th style="width: 100px;">Опоздал</th>
+                    <th style="width: 150px;">Минут опоздания</th>
+                    <th style="width: 150px;">Зачтено часов</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in participants %}
+                <tr>
+                    <td>{{ p.volunteer.first_name }} {{ p.volunteer.last_name }}</td>
+                    <td style="text-align: center;">
+                        <input type="checkbox" id="late_{{ p.id }}" name="late_{{ p.id }}" 
+                               {% if p.is_late %}checked{% endif %} 
+                               onchange="toggleLateMinutes(this, '{{ p.id }}')">
+                    </td>
+                    <td>
+                        <input type="number" name="late_minutes_{{ p.id }}" 
+                               value="{{ p.late_minutes|default:0 }}" min="0" 
+                               class="form-control" style="width: 100px;"
+                               id="late_minutes_{{ p.id }}" 
+                               {% if not p.is_late %}disabled{% endif %}>
+                    </td>
+                    <td style="font-weight: 500;">
+                        {% with total=p.hours_awarded %}
+                            {% with h=total|floatformat:0 %}
+                                {% with m=total|subtract:h|multiply:60|floatformat:0 %}
+                                    {{ h }}:{% if m|add:'0'|length == 1 %}0{% endif %}{{ m|add:'0' }}
+                                {% endwith %}
+                            {% endwith %}
+                        {% endwith %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div class="mt-3">
+            <button name="save_participants" class="btn btn-primary">Сохранить изменения</button>
+        </div>
+    </form>
+    {% else %}
+    <p style="color: #666; text-align: center; padding: 1rem;">
+        Пока нет добавленных волонтёров
+    </p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2 class="mb-2">Завершение мероприятия</h2>
+    <p class="mb-2" style="color: #666;">
+        После завершения мероприятия укажите его фактическую длительность в часах. 
+        На основе этого будут рассчитаны часы для волонтёров с учётом опозданий.
+    </p>
+    <form method="post" class="flex gap-2 items-center">
+        {% csrf_token %}
+        <input name="duration_hours" type="number" min="0.5" step="0.5" value="{{ event.duration_hours|default:'' }}" 
+               class="form-control" placeholder="Длительность (часов)" style="max-width: 200px;">
+        <button name="set_duration" class="btn btn-success">Завершить мероприятие</button>
+    </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const searchInput = document.getElementById('volunteer-search');
+const resultsBox = document.getElementById('volunteer-results');
+const volunteerIdInput = document.getElementById('volunteer-id');
+const addButton = document.getElementById('add-volunteer-btn');
+let timer;
+
+searchInput.addEventListener('input', function() {
+  clearTimeout(timer);
+  const q = this.value.trim();
+  if (q.length < 2) { 
+    resultsBox.style.display = 'none'; 
+    addButton.disabled = true;
+    return; 
+  }
+  
+  timer = setTimeout(() => {
+    fetch(`/api/volunteer-search/?q=${encodeURIComponent(q)}&event_id={{ event.id }}`)
+      .then(r => r.json())
+      .then(data => {
+        resultsBox.innerHTML = '';
+        if (data.results.length === 0) { 
+          resultsBox.style.display = 'none';
+          addButton.disabled = true;
+          return; 
+        }
+        
+        data.results.forEach(v => {
+          const div = document.createElement('div');
+          div.textContent = v.name + ' (' + v.email + ')';
+          div.className = 'search-result-item';
+          div.onclick = () => {
+            searchInput.value = v.name + ' (' + v.email + ')';
+            volunteerIdInput.value = v.id;
+            resultsBox.style.display = 'none';
+            addButton.disabled = false;
+          };
+          resultsBox.appendChild(div);
+        });
+        
+        resultsBox.style.display = 'block';
+      });
+  }, 200);
+});
+
+document.getElementById('add-volunteer-form').addEventListener('submit', function(e) {
+  if (!volunteerIdInput.value) {
+    e.preventDefault();
+    searchInput.focus();
+  }
+});
+
+document.addEventListener('click', function(e) {
+  if (!resultsBox.contains(e.target) && e.target !== searchInput) {
+    resultsBox.style.display = 'none';
+  }
+});
+
+function toggleLateMinutes(checkbox, id) {
+  const minutesInput = document.getElementById('late_minutes_' + id);
+  minutesInput.disabled = !checkbox.checked;
+  if (checkbox.checked) {
+    minutesInput.focus();
+  }
+}
+</script>
+{% endblock %} 
