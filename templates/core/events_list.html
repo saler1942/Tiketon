@@ -6,6 +6,9 @@
 <div class="flex justify-between items-center mb-3">
     <h1>Мероприятия</h1>
     <div class="flex gap-2">
+        {% if user.is_staff %}
+        <a href="{% url 'admin:index' %}" class="btn btn-secondary">Админ-панель</a>
+        {% endif %}
         <a href="{% url 'export_all_events' %}" class="btn btn-secondary">Экспорт всех в Excel</a>
         <a href="{% url 'event_create' %}" class="btn btn-primary">+ Новое мероприятие</a>
     </div>
