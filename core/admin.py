@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Volunteer, Event, EventParticipant
+from .models import Scanner, Event, EventParticipant
 from django.contrib.auth.models import User, Group
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
@@ -15,9 +15,9 @@ class UserAdmin(BaseUserAdmin):
     ordering = ('email',)
     fieldsets = (
         (None, {'fields': ('username', 'password')}),
-        (_('Personal info'), {'fields': ('first_name', 'last_name', 'email')}),
-        (_('Permissions'), {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups')}),
-        (_('Important dates'), {'fields': ('last_login', 'date_joined')}),
+        (_('Персональная информация'), {'fields': ('first_name', 'last_name', 'email')}),
+        (_('Разрешения'), {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups')}),
+        (_('Важные даты'), {'fields': ('last_login', 'date_joined')}),
     )
     actions = ['make_team_leader']
 
@@ -41,7 +41,33 @@ class UserAdmin(BaseUserAdmin):
 # Регистрируем кастомную админку для User
 admin.site.register(User, UserAdmin)
 
-# Регистрируем остальные модели
-admin.site.register(Volunteer)
-admin.site.register(Event)
-admin.site.register(EventParticipant)
+# Класс для админки сканера с фильтрацией и поиском
+class ScannerAdmin(admin.ModelAdmin):
+    list_display = ('first_name', 'last_name', 'email')
+    list_filter = ('first_name', 'last_name')
+    search_fields = ('first_name', 'last_name', 'email')
+    ordering = ('last_name', 'first_name')
+
+# Класс для админки мероприятий с фильтрацией и поиском
+class EventAdmin(admin.ModelAdmin):
+    list_display = ('name', 'date', 'volunteers_required', 'leader', 'duration_hours')
+    list_filter = ('date', 'leader')
+    search_fields = ('name', 'leader__username', 'leader__first_name', 'leader__last_name')
+    ordering = ('-date',)
+
+# Класс для админки участников с фильтрацией и поиском
+class EventParticipantAdmin(admin.ModelAdmin):
+    list_display = ('event', 'volunteer', 'is_late', 'late_minutes', 'hours_awarded')
+    list_filter = ('event', 'is_late')
+    search_fields = ('event__name', 'volunteer__first_name', 'volunteer__last_name', 'volunteer__email')
+    ordering = ('event', 'volunteer')
+
+# Регистрируем остальные модели с кастомной админкой
+admin.site.register(Scanner, ScannerAdmin)
+admin.site.register(Event, EventAdmin)
+admin.site.register(EventParticipant, EventParticipantAdmin)
+
+# Меняем название админки
+admin.site.site_header = 'Freedom Ticketon | TEAM SYRYM'
+admin.site.site_title = 'Freedom Ticketon'
+admin.site.index_title = 'Администрирование системы'

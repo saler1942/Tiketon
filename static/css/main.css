@@ -1,14 +1,14 @@
 /* Основные стили сайта */
 :root {
-    --primary-color: #3e4a89;
-    --primary-hover: #303c79;
-    --accent-color: #4d6fc9;
-    --light-color: #f5f7fb;
-    --dark-color: #2c3345;
-    --gray-color: #e2e5ee;
+    --primary-color: #00a651;
+    --primary-hover: #008442;
+    --accent-color: #4dc075;
+    --light-color: #f5fff9;
+    --dark-color: #1a1a1a;
+    --gray-color: #f0f0f0;
     --text-color: #333;
     --danger-color: #d84040;
-    --success-color: #3a9a5a;
+    --success-color: #00a651;
 }
 
 body {
@@ -18,37 +18,46 @@ body {
     line-height: 1.5;
     margin: 0;
     padding: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
 /* Контейнеры */
 .container {
+    width: 100%;
     max-width: 1000px;
     margin: 0 auto;
     padding: 1rem;
+    box-sizing: border-box;
 }
 
 .card {
     background: white;
-    border-radius: 6px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
     padding: 20px;
     margin-bottom: 20px;
+    border-left: 4px solid var(--primary-color);
+    overflow: hidden;
 }
 
 /* Заголовки */
 h1, h2, h3 {
     color: var(--dark-color);
     font-weight: 600;
+    word-wrap: break-word;
 }
 
 h1 {
     font-size: 1.8rem;
     margin-bottom: 1.5rem;
+    color: var(--primary-color);
 }
 
 h2 {
     font-size: 1.4rem;
     margin-bottom: 1rem;
+    color: var(--dark-color);
 }
 
 /* Формы */
@@ -56,16 +65,18 @@ h2 {
     display: block;
     width: 100%;
     padding: 0.5rem 0.75rem;
-    border: 1px solid #ccc;
-    border-radius: 4px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
     margin-bottom: 1rem;
     font-size: 1rem;
+    transition: all 0.2s ease;
+    box-sizing: border-box;
 }
 
 .form-control:focus {
     outline: none;
     border-color: var(--accent-color);
-    box-shadow: 0 0 0 3px rgba(77, 111, 201, 0.15);
+    box-shadow: 0 0 0 3px rgba(0, 166, 81, 0.15);
 }
 
 .form-group {
@@ -76,16 +87,22 @@ label {
     display: block;
     margin-bottom: 0.5rem;
     font-weight: 500;
+    color: var(--dark-color);
 }
 
 /* Кнопки */
 .btn {
     padding: 0.5rem 1rem;
-    border-radius: 4px;
+    border-radius: 6px;
     border: none;
     cursor: pointer;
     font-weight: 500;
     transition: background-color 0.2s, transform 0.1s;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 0.9rem;
+    display: inline-block;
+    text-align: center;
 }
 
 .btn:active {
@@ -107,7 +124,7 @@ label {
 }
 
 .btn-secondary:hover {
-    background-color: #d0d3dc;
+    background-color: #e0e0e0;
 }
 
 .btn-danger {
@@ -125,7 +142,7 @@ label {
 }
 
 .btn-success:hover {
-    background-color: #2e8349;
+    background-color: var(--primary-hover);
 }
 
 /* Таблицы */
@@ -133,6 +150,10 @@ table {
     width: 100%;
     border-collapse: collapse;
     margin-bottom: 1.5rem;
+    background-color: white;
+    border-radius: 8px;
+    overflow-x: auto;
+    display: block;
 }
 
 th, td {
@@ -144,16 +165,21 @@ th, td {
 th {
     font-weight: 600;
     background-color: #f9fafc;
+    color: var(--primary-color);
+    text-transform: uppercase;
+    font-size: 0.85rem;
+    letter-spacing: 0.5px;
 }
 
 tr:hover {
-    background-color: #f5f7fb;
+    background-color: #eaffe8;
 }
 
 /* Поиск и выпадающие меню */
 .search-container {
     position: relative;
     margin-bottom: 1rem;
+    width: 100%;
 }
 
 .search-results {
@@ -161,13 +187,13 @@ tr:hover {
     left: 0;
     right: 0;
     background: white;
-    border: 1px solid #ccc;
+    border: 1px solid #ddd;
     border-top: none;
-    border-radius: 0 0 4px 4px;
+    border-radius: 0 0 6px 6px;
     z-index: 10;
     max-height: 250px;
     overflow-y: auto;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
 }
 
 .search-result-item {
@@ -181,7 +207,8 @@ tr:hover {
 }
 
 .search-result-item:hover {
-    background-color: #f5f7fb;
+    background-color: #eaffe8;
+    color: var(--primary-color);
 }
 
 /* Утилиты */
@@ -210,6 +237,8 @@ tr:hover {
     background-color: var(--dark-color);
     color: white;
     padding: 0.75rem 0;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    position: relative;
 }
 
 .navbar .container {
@@ -223,6 +252,8 @@ tr:hover {
     font-weight: 600;
     color: white;
     text-decoration: none;
+    display: flex;
+    align-items: center;
 }
 
 .navbar-nav {
@@ -240,20 +271,146 @@ tr:hover {
     color: rgba(255, 255, 255, 0.85);
     text-decoration: none;
     transition: color 0.2s;
+    position: relative;
+    padding: 0.5rem 0;
 }
 
 .nav-link:hover {
     color: white;
 }
 
+.nav-link::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 0;
+    height: 2px;
+    background-color: var(--primary-color);
+    transition: width 0.3s;
+}
+
+.nav-link:hover::after {
+    width: 100%;
+}
+
 /* Адаптивность */
 @media (max-width: 768px) {
+    .navbar .container {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .navbar-nav {
+        margin-top: 1rem;
+        flex-wrap: wrap;
+        width: 100%;
+    }
+    
+    .nav-item {
+        margin-left: 0;
+        margin-right: 1rem;
+        margin-bottom: 0.5rem;
+    }
+    
+    .flex {
+        flex-direction: column;
+    }
+    
+    .btn {
+        width: 100%;
+        margin-bottom: 0.5rem;
+    }
+
+    .card {
+        padding: 15px;
+    }
+
+    h1 {
+        font-size: 1.5rem;
+    }
+
+    h2 {
+        font-size: 1.2rem;
+    }
+}
+
+/* Дополнительные адаптивные стили */
+@media (max-width: 480px) {
+    .navbar-brand {
+        font-size: 1rem;
+    }
+    
+    .logo {
+        width: 30px;
+        height: 30px;
+    }
+    
     .container {
         padding: 0.5rem;
     }
     
+    .card {
+        padding: 12px;
+        margin-bottom: 15px;
+    }
+    
     table {
-        display: block;
+        font-size: 0.9rem;
+    }
+    
+    th, td {
+        padding: 0.5rem;
+    }
+    
+    .form-control {
+        font-size: 16px; /* Предотвращает масштабирование на iOS */
+    }
+    
+    h1 {
+        font-size: 1.3rem;
+        margin-bottom: 1rem;
+    }
+}
+
+/* Стили для планшетов */
+@media (min-width: 769px) and (max-width: 1024px) {
+    .container {
+        max-width: 95%;
+    }
+    
+    .card {
+        padding: 18px;
+    }
+}
+
+/* Улучшения для таблиц на мобильных устройствах */
+@media (max-width: 768px) {
+    table {
+        width: 100%;
         overflow-x: auto;
+        display: block;
+    }
+    
+    /* Делаем таблицы с горизонтальной прокруткой */
+    .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+}
+
+/* Улучшения для форм на мобильных устройствах */
+@media (max-width: 480px) {
+    .form-group {
+        margin-bottom: 0.75rem;
+    }
+    
+    .form-control {
+        margin-bottom: 0.75rem;
+        padding: 0.6rem;
+    }
+    
+    label {
+        margin-bottom: 0.3rem;
     }
 } 

@@ -1,13 +1,14 @@
 {% extends 'base.html' %}
 {% load custom_filters %}
 
-{% block title %}{{ event.name }} | Тикетон{% endblock %}
+{% block title %}{{ event.name }} | Freedom Ticketon | TEAM SYRYM{% endblock %}
 
 {% block content %}
 <div class="flex justify-between items-center mb-3">
     <h1>{{ event.name }}</h1>
     <div class="flex gap-2">
         <a href="{% url 'event_export' event.id %}" class="btn btn-secondary">Экспорт в Excel</a>
+        <a href="{% url 'generate_all_certificates' event.id %}" class="btn btn-success">Благодарности для всех</a>
         <a href="{% url 'events' %}" class="btn btn-secondary">← Назад к мероприятиям</a>
     </div>
 </div>
@@ -19,19 +20,19 @@
             <strong>Дата:</strong> {{ event.date }}
         </div>
         <div style="flex: 1;">
-            <strong>Требуется волонтёров:</strong> {{ event.volunteers_required }}
+            <strong>Требуется сканеров:</strong> {{ event.volunteers_required }}
         </div>
     </div>
 </div>
 
 <div class="card mb-3">
-    <h2 class="mb-2">Добавление волонтёров</h2>
+    <h2 class="mb-2">Добавление сканеров</h2>
     <form id="add-volunteer-form" method="post" class="search-container mb-2">
         {% csrf_token %}
         <div class="flex gap-2">
-            <input id="volunteer-search" type="text" class="form-control" placeholder="Поиск волонтёра по имени или email" autocomplete="off" style="flex:1">
+            <input id="volunteer-search" type="text" class="form-control" placeholder="Поиск сканера по имени или email" autocomplete="off" style="flex:1">
             <input type="hidden" name="volunteer_id" id="volunteer-id">
-            <button name="add_volunteer" class="btn btn-primary" disabled id="add-volunteer-btn">Добавить волонтёра</button>
+            <button name="add_volunteer" class="btn btn-primary" disabled id="add-volunteer-btn">Добавить сканера</button>
         </div>
         <div id="volunteer-results" class="search-results" style="display:none;"></div>
     </form>
@@ -45,28 +46,18 @@
         <table>
             <thead>
                 <tr>
-                    <th>Волонтёр</th>
-                    <th style="width: 100px;">Опоздал</th>
-                    <th style="width: 150px;">Минут опоздания</th>
+                    <th>Сканер</th>
+                    {% if is_admin %}
                     <th style="width: 150px;">Зачтено часов</th>
+                    {% endif %}
+                    <th style="width: 180px;">Действия</th>
                 </tr>
             </thead>
             <tbody>
                 {% for p in participants %}
                 <tr>
                     <td>{{ p.volunteer.first_name }} {{ p.volunteer.last_name }}</td>
-                    <td style="text-align: center;">
-                        <input type="checkbox" id="late_{{ p.id }}" name="late_{{ p.id }}" 
-                               {% if p.is_late %}checked{% endif %} 
-                               onchange="toggleLateMinutes(this, '{{ p.id }}')">
-                    </td>
-                    <td>
-                        <input type="number" name="late_minutes_{{ p.id }}" 
-                               value="{{ p.late_minutes|default:0 }}" min="0" 
-                               class="form-control" style="width: 100px;"
-                               id="late_minutes_{{ p.id }}" 
-                               {% if not p.is_late %}disabled{% endif %}>
-                    </td>
+                    {% if is_admin %}
                     <td style="font-weight: 500;">
                         {% with total=p.hours_awarded %}
                             {% with h=total|floatformat:0 %}
@@ -76,26 +67,33 @@
                             {% endwith %}
                         {% endwith %}
                     </td>
+                    {% endif %}
+                    <td>
+                        <a href="{% url 'generate_certificate' p.id %}" class="btn btn-success" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;">Благодарность</a>
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
         </table>
+        {% if is_admin %}
         <div class="mt-3">
             <button name="save_participants" class="btn btn-primary">Сохранить изменения</button>
         </div>
+        {% endif %}
     </form>
     {% else %}
     <p style="color: #666; text-align: center; padding: 1rem;">
-        Пока нет добавленных волонтёров
+        Пока нет добавленных сканеров
     </p>
     {% endif %}
 </div>
 
+{% if is_admin %}
 <div class="card">
     <h2 class="mb-2">Завершение мероприятия</h2>
     <p class="mb-2" style="color: #666;">
         После завершения мероприятия укажите его фактическую длительность в часах. 
-        На основе этого будут рассчитаны часы для волонтёров с учётом опозданий.
+        На основе этого будут рассчитаны часы для сканеров.
     </p>
     <form method="post" class="flex gap-2 items-center">
         {% csrf_token %}
@@ -103,6 +101,19 @@
                class="form-control" placeholder="Длительность (часов)" style="max-width: 200px;">
         <button name="set_duration" class="btn btn-success">Завершить мероприятие</button>
     </form>
+</div>
+{% endif %}
+
+<div class="card mt-3">
+    <h2 class="mb-2">Благодарственные письма</h2>
+    <p class="mb-2" style="color: #666;">
+        Вы можете сгенерировать благодарственные письма для участников мероприятия.
+        Письма создаются на основе шаблона PowerPoint с автоматическим заполнением данных участника.
+    </p>
+    <div>
+        <a href="{% url 'generate_all_certificates' event.id %}" class="btn btn-success">Сгенерировать для всех участников</a>
+        <a href="{% url 'scanner_certificates' %}" class="btn btn-primary">Персональные благодарности</a>
+    </div>
 </div>
 {% endblock %}
 
@@ -124,7 +135,7 @@ searchInput.addEventListener('input', function() {
   }
   
   timer = setTimeout(() => {
-    fetch(`/api/volunteer-search/?q=${encodeURIComponent(q)}&event_id={{ event.id }}`)
+    fetch(`/api/scanner-search/?q=${encodeURIComponent(q)}&event_id={{ event.id }}`)
       .then(r => r.json())
       .then(data => {
         resultsBox.innerHTML = '';
@@ -164,13 +175,5 @@ document.addEventListener('click', function(e) {
     resultsBox.style.display = 'none';
   }
 });
-
-function toggleLateMinutes(checkbox, id) {
-  const minutesInput = document.getElementById('late_minutes_' + id);
-  minutesInput.disabled = !checkbox.checked;
-  if (checkbox.checked) {
-    minutesInput.focus();
-  }
-}
 </script>
 {% endblock %} 

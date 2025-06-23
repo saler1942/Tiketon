@@ -1,0 +1,153 @@
+{% extends 'base.html' %}
+
+{% block title %}Генерация благодарственных писем | Freedom Ticketon | TEAM SYRYM{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-3" style="flex-wrap: wrap; gap: 1rem;">
+    <h1>Благодарственные письма сканерам</h1>
+    <div class="flex gap-2">
+        <a href="{% url 'events' %}" class="btn btn-secondary">← Назад</a>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <h2 class="mb-2">Поиск сканера</h2>
+    <p class="mb-2" style="color: #666; word-break: break-word;">
+        Найдите сканера по имени или email, чтобы создать для него благодарственное письмо со всеми мероприятиями, 
+        в которых он участвовал, включая суммарные часы и период участия.
+    </p>
+    
+    <div class="search-container mb-2">
+        <div class="flex gap-2" style="flex-wrap: wrap;">
+            <input id="scanner-search" type="text" class="form-control" placeholder="Поиск сканера по имени или email" autocomplete="off" style="flex:1; min-width: 100%;">
+        </div>
+        <div id="scanner-results" class="search-results" style="display:none;"></div>
+    </div>
+</div>
+
+<div id="selected-scanner" class="card mb-3" style="display:none;">
+    <h2 class="mb-2">Информация о сканере</h2>
+    <div id="scanner-info" class="mb-3">
+        <!-- Здесь будет информация о сканере -->
+    </div>
+    <div id="scanner-events" class="mb-3 table-responsive">
+        <!-- Здесь будет список мероприятий -->
+    </div>
+    <div class="mt-3">
+        <a id="generate-certificate-btn" href="#" class="btn btn-success" style="width: 100%; max-width: 300px;">Сгенерировать благодарственное письмо</a>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const searchInput = document.getElementById('scanner-search');
+const resultsBox = document.getElementById('scanner-results');
+const selectedScannerDiv = document.getElementById('selected-scanner');
+const scannerInfoDiv = document.getElementById('scanner-info');
+const scannerEventsDiv = document.getElementById('scanner-events');
+const generateBtn = document.getElementById('generate-certificate-btn');
+let timer;
+let selectedScannerId = null;
+
+searchInput.addEventListener('input', function() {
+    clearTimeout(timer);
+    const q = this.value.trim();
+    if (q.length < 2) { 
+        resultsBox.style.display = 'none'; 
+        return; 
+    }
+    
+    timer = setTimeout(() => {
+        fetch(`/api/scanner-search/?q=${encodeURIComponent(q)}`)
+            .then(r => r.json())
+            .then(data => {
+                resultsBox.innerHTML = '';
+                if (data.results.length === 0) { 
+                    resultsBox.style.display = 'none';
+                    return; 
+                }
+                
+                data.results.forEach(v => {
+                    const div = document.createElement('div');
+                    div.textContent = v.name + ' (' + v.email + ')';
+                    div.className = 'search-result-item';
+                    div.onclick = () => {
+                        selectScanner(v.id, v.name, v.email);
+                        resultsBox.style.display = 'none';
+                    };
+                    resultsBox.appendChild(div);
+                });
+                
+                resultsBox.style.display = 'block';
+            })
+            .catch(error => {
+                console.error('Ошибка поиска:', error);
+            });
+    }, 200);
+});
+
+function selectScanner(id, name, email) {
+    selectedScannerId = id;
+    selectedScannerDiv.style.display = 'block';
+    
+    // Отображаем информацию о сканере
+    scannerInfoDiv.innerHTML = `
+        <p><strong>ФИО:</strong> ${name}</p>
+        <p><strong>Email:</strong> ${email}</p>
+    `;
+    
+    // Показываем индикатор загрузки
+    scannerEventsDiv.innerHTML = '<p>Загрузка данных...</p>';
+    generateBtn.style.display = 'none';
+    
+    // Получаем список мероприятий сканера
+    fetch(`/api/scanner-events/${id}/`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.events.length === 0) {
+                scannerEventsDiv.innerHTML = '<p>Сканер не участвовал ни в одном мероприятии</p>';
+                generateBtn.style.display = 'none';
+                return;
+            }
+            
+            let eventsHtml = '<h3>Участие в мероприятиях:</h3>';
+            eventsHtml += '<div class="table-responsive"><table style="width: 100%;"><thead><tr><th>Мероприятие</th><th>Дата</th><th>Часы</th></tr></thead><tbody>';
+            
+            data.events.forEach(event => {
+                eventsHtml += `<tr><td>${event.name}</td><td>${event.date}</td><td>${event.hours}</td></tr>`;
+            });
+            
+            eventsHtml += '</tbody></table></div>';
+            
+            eventsHtml += `
+                <div style="margin-top: 1rem;">
+                    <p><strong>Суммарные часы:</strong> ${data.total_hours}</p>
+                    <p><strong>Период участия:</strong> ${data.first_date} - ${data.last_date}</p>
+                </div>
+            `;
+            
+            scannerEventsDiv.innerHTML = eventsHtml;
+            generateBtn.style.display = 'inline-block';
+            generateBtn.href = `/certificates/scanner/${id}/`;
+        })
+        .catch(error => {
+            scannerEventsDiv.innerHTML = '<p class="text-danger">Ошибка при загрузке данных</p>';
+            console.error('Ошибка получения данных:', error);
+        });
+}
+
+document.addEventListener('click', function(e) {
+    if (!resultsBox.contains(e.target) && e.target !== searchInput) {
+        resultsBox.style.display = 'none';
+    }
+});
+
+// Прокрутка к выбранному сканеру при его выборе
+function scrollToScanner() {
+    if (selectedScannerDiv.style.display !== 'none') {
+        selectedScannerDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+</script>
+{% endblock %} 
