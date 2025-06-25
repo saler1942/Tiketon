@@ -72,11 +72,11 @@
             </div>
             {% if user.is_authenticated %}
             <ul class="navbar-nav" id="mobileMenu">
-                <li class="nav-item">
+                <!-- <li class="nav-item">
                     <a href="{% url 'events' %}" class="nav-link">Мероприятия</a>
-                </li>
+                </li> -->
                 <li class="nav-item">
-                    <a href="{% url 'import_excel' %}" class="nav-link">Импорт из Excel</a>
+                    <a href="{% url 'all_scanners' %}" class="nav-link">Список сканеров</a>
                 </li>
                 <li class="nav-item">
                     <a href="{% url 'scanner_certificates' %}" class="nav-link">Благодарственные письма</a>

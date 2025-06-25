@@ -1,0 +1,156 @@
+{% extends 'base.html' %}
+
+{% block title %}Список сканеров | Freedom Ticketon | TEAM SYRYM{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-3" style="flex-wrap: wrap; gap: 1rem;">
+    <h1>Список сканеров</h1>
+    <div class="flex gap-2" style="flex-wrap: wrap;">
+        <a href="{% url 'scanner_certificates' %}" class="btn btn-success">Благодарственные письма</a>
+    </div>
+</div>
+
+<form method="get" class="card mb-3 table-responsive" style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: end;">
+    <div style="flex:1; min-width: 180px; width: 100%;">
+        <label for="q">Поиск по имени</label>
+        <input type="text" id="q" name="q" class="form-control" value="{{ query|default:'' }}" placeholder="Имя или фамилия">
+    </div>
+    <div style="min-width: 150px; width: calc(50% - 0.5rem);">
+        <label for="min_hours">Мин. часов</label>
+        <input type="number" id="min_hours" name="min_hours" class="form-control" step="0.5" min="0" value="{{ min_hours|default:'' }}">
+    </div>
+    <div style="min-width: 150px; width: calc(50% - 0.5rem);">
+        <label for="max_hours">Макс. часов</label>
+        <input type="number" id="max_hours" name="max_hours" class="form-control" step="0.5" min="0" value="{{ max_hours|default:'' }}">
+    </div>
+    <div style="min-width: 120px; width: 100%;">
+        <button type="submit" class="btn btn-primary" style="width: 100%;">Найти</button>
+    </div>
+</form>
+
+<div id="modal-error" style="display:none;position:fixed;z-index:99999;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.45);align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,0.18);padding:2.5rem 2rem;max-width:90vw;min-width:320px;text-align:center;position:relative;">
+    <div style="font-size:3rem;line-height:1;margin-bottom:1rem;color:#00a651;">🎉</div>
+    <div id="modal-error-text" style="font-size:1.5rem;font-weight:600;margin-bottom:1.5rem;color:#222;">Ошибка</div>
+    <button onclick="closeModalError()" style="background:#00a651;color:#fff;border:none;border-radius:8px;padding:0.7rem 2.5rem;font-size:1.1rem;font-weight:600;cursor:pointer;">OK</button>
+  </div>
+</div>
+
+{% if scanners %}
+<div class="card table-responsive">
+    <table>
+        <thead>
+            <tr>
+                <th>Имя</th>
+                <th>Фамилия</th>
+                <th>Волонтерские часы</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for scanner in scanners %}
+            <tr>
+                <td>{{ scanner.first_name }}</td>
+                <td>{{ scanner.last_name }}</td>
+                <td>{{ scanner.total_hours }}</td>
+                <td>
+                    <div class="dropdown d-inline-block">
+                        <button class="btn btn-success dropdown-toggle" type="button" id="certDropdown{{ scanner.id }}" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;">
+                            Благодарность
+                        </button>
+                        <div class="dropdown-menu" aria-labelledby="certDropdown{{ scanner.id }}">
+                            <a class="dropdown-item" href="#" onclick="downloadCertificate({{ scanner.id }}, this); return false;">PDF</a>
+                        </div>
+                    </div>
+                    <button onclick="toggleEvents({{ scanner.id }})" class="btn btn-secondary" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;">Мероприятия</button>
+                </td>
+            </tr>
+            <tr id="events-{{ scanner.id }}" style="display: none;">
+                <td colspan="5">
+                    <div style="padding: 1rem; background-color: #f8f9fa;">
+                        <h3 style="margin-bottom: 0.5rem;">Участие в мероприятиях</h3>
+                        {% if scanner.events %}
+                        <table style="width: 100%;">
+                            <thead>
+                                <tr>
+                                    <th>Мероприятие</th>
+                                    <th>Дата</th>
+                                    <th>Часы</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for event in scanner.events %}
+                                <tr>
+                                    <td>{{ event.name }}</td>
+                                    <td>{{ event.date }}</td>
+                                    <td>{{ event.hours }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        {% else %}
+                        <p>Нет участия в мероприятиях</p>
+                        {% endif %}
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="card" style="text-align: center; padding: 3rem 1rem;">
+    <div style="font-size: 3rem; color: #ccc; margin-bottom: 1rem;">👤</div>
+    <h2>Сканеры не найдены</h2>
+    <p style="color: #666;">Измените параметры поиска или добавьте новых сканеров в систему</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function toggleEvents(scannerId) {
+        const eventsRow = document.getElementById(`events-${scannerId}`);
+        if (eventsRow.style.display === 'none') {
+            eventsRow.style.display = 'table-row';
+        } else {
+            eventsRow.style.display = 'none';
+        }
+    }
+
+    function showModalError(message) {
+        document.getElementById('modal-error-text').textContent = message;
+        document.getElementById('modal-error').style.display = 'flex';
+    }
+    function closeModalError() {
+        document.getElementById('modal-error').style.display = 'none';
+    }
+
+    function downloadCertificate(scannerId, el) {
+        el.disabled = true;
+        fetch(`/certificates/scanner/${scannerId}/?format=pdf`, {headers: {'X-Requested-With': 'XMLHttpRequest'}})
+            .then(async response => {
+                if (!response.ok) {
+                    const data = await response.json();
+                    showModalError(data.error || 'Сканер не был на ивентах');
+                    el.disabled = false;
+                    return;
+                }
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `certificate_${scannerId}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+                el.disabled = false;
+            })
+            .catch(() => {
+                showModalError('Ошибка при генерации сертификата');
+                el.disabled = false;
+            });
+    }
+</script>
+{% endblock %} 

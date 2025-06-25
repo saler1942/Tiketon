@@ -4,6 +4,13 @@ from django.contrib.auth.models import User, Group
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
 
+# Proxy-модель для User с кастомным verbose_name
+class TeamLeader(User):
+    class Meta:
+        proxy = True
+        verbose_name = 'Тим лидер'
+        verbose_name_plural = 'Тим лидеры'
+
 # Отменяем стандартную регистрацию User
 admin.site.unregister(User)
 
@@ -38,8 +45,8 @@ class UserAdmin(BaseUserAdmin):
         self.message_user(request, 'Выбранные пользователи добавлены в тимлидеры.')
     make_team_leader.short_description = 'Сделать тимлидером'
 
-# Регистрируем кастомную админку для User
-admin.site.register(User, UserAdmin)
+# Регистрируем proxy-модель TeamLeader вместо User
+admin.site.register(TeamLeader, UserAdmin)
 
 # Класс для админки сканера с фильтрацией и поиском
 class ScannerAdmin(admin.ModelAdmin):
@@ -50,8 +57,8 @@ class ScannerAdmin(admin.ModelAdmin):
 
 # Класс для админки мероприятий с фильтрацией и поиском
 class EventAdmin(admin.ModelAdmin):
-    list_display = ('name', 'date', 'volunteers_required', 'leader', 'duration_hours')
-    list_filter = ('date', 'leader')
+    list_display = ('name', 'date', 'start_date', 'end_date', 'volunteers_required', 'leader', 'duration_hours')
+    list_filter = ('date', 'start_date', 'end_date', 'leader')
     search_fields = ('name', 'leader__username', 'leader__first_name', 'leader__last_name')
     ordering = ('-date',)
 

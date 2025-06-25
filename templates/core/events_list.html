@@ -6,12 +6,12 @@
 <div class="flex justify-between items-center mb-3" style="flex-wrap: wrap; gap: 1rem;">
     <h1>Мероприятия</h1>
     <div class="flex gap-2" style="flex-wrap: wrap;">
+        <a href="{% url 'event_create' %}" class="btn btn-primary">Добавить мероприятие</a>
         {% if user.is_staff %}
         <a href="{% url 'admin:index' %}" class="btn btn-secondary">Админ-панель</a>
         {% endif %}
         <a href="{% url 'scanner_certificates' %}" class="btn btn-success">Благодарственные письма</a>
-        <a href="{% url 'export_all_events' %}" class="btn btn-secondary">Экспорт в Excel</a>
-        <a href="{% url 'event_create' %}" class="btn btn-primary">+ Новое</a>
+        <!-- <a href="{% url 'export_all_events' %}" class="btn btn-secondary">Экспорт в Excel</a> -->
     </div>
 </div>
 
@@ -74,7 +74,6 @@
     <div style="font-size: 3rem; color: #ccc; margin-bottom: 1rem;">📅</div>
     <h2>Нет мероприятий по заданным условиям</h2>
     <p class="mb-3" style="color: #666;">Измените фильтры или создайте новое мероприятие</p>
-    <a href="{% url 'event_create' %}" class="btn btn-primary">Создать мероприятие</a>
 </div>
 {% endif %}
 {% endblock %} 

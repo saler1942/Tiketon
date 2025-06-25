@@ -6,14 +6,16 @@ from django.contrib.auth.models import User
 class Scanner(models.Model):
     first_name = models.CharField(max_length=64)
     last_name = models.CharField(max_length=64)
-    email = models.EmailField(unique=True)
+    email = models.EmailField(blank=True, null=True)
 
     def __str__(self):
         return f'{self.first_name} {self.last_name}'
 
 class Event(models.Model):
     name = models.CharField(max_length=128)
-    date = models.DateField()
+    date = models.DateField()  # для обратной совместимости
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
     volunteers_required = models.PositiveIntegerField()
     leader = models.ForeignKey(User, on_delete=models.CASCADE)
     duration_hours = models.FloatField(null=True, blank=True, help_text="Длительность мероприятия в часах")

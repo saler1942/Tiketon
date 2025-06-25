@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import login_request, code_verify, events_list, event_create, event_edit, volunteer_search as scanner_search, home, export_event_participants, import_excel, export_all_events, generate_certificate, generate_all_certificates, generate_scanner_certificate, scanner_certificates, scanner_events_api, debug_template
+from .views import login_request, code_verify, events_list, event_create, event_edit, volunteer_search as scanner_search, home, export_event_participants, export_all_events, generate_certificate, generate_all_certificates, generate_scanner_certificate, scanner_certificates, scanner_events_api, debug_template, all_scanners_list, event_delete
 from django.http import HttpResponse
 
 urlpatterns = [
@@ -13,7 +13,6 @@ urlpatterns = [
     path('events/<int:event_id>/export/', export_event_participants, name='event_export'),
     path('events/export/all/', export_all_events, name='export_all_events'),
     path('api/scanner-search/', scanner_search, name='volunteer_search'),
-    path('import/', import_excel, name='import_excel'),
     # URL для благодарственных писем
     path('certificates/participant/<int:participant_id>/', generate_certificate, name='generate_certificate'),
     path('certificates/event/<int:event_id>/', generate_all_certificates, name='generate_all_certificates'),
@@ -21,6 +20,9 @@ urlpatterns = [
     # Новая страница для поиска сканеров и генерации сертификатов
     path('certificates/', scanner_certificates, name='scanner_certificates'),
     path('api/scanner-events/<int:scanner_id>/', scanner_events_api, name='scanner_events_api'),
+    # Список всех сканеров с фильтрацией
+    path('scanners/', all_scanners_list, name='all_scanners'),
     # Диагностические URL
     path('debug/template/', debug_template, name='debug_template'),
+    path('events/<int:event_id>/delete/', event_delete, name='event_delete'),
 ] 
