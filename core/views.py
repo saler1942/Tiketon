@@ -508,86 +508,111 @@ def convert_pptx_to_png(pptx_path):
             # Зеленый текст как на фото
             draw.text((name_x, name_y), name, font=name_font, fill=(120, 220, 80))
         
-        # Текст благодарности (белым шрифтом)
-        thanks_text = "We, the Tiketon company, would like to sincerely express our gratitude and "
-        thanks_text += "appreciation towards your incredible work and support in organizing "
-        thanks_text += "our events in 2024 and 2025. You played important role in organization of "
-        thanks_text += "each event. We hope to see you again in upcoming events!"
+        # Блок благодарности (как на скриншоте)
+        lines = [
+            "We, the Ticketon company, would like to sincerely express our gratitude and",
+            "appreciation towards your incredible work and support in organizing our events in 2024 and 2025.",
+            "You played important role in organization of each event.",
+            "We hope to see you again in upcoming events!"
+        ]
+        line_h = italic_font.getbbox('Ag')[3] - italic_font.getbbox('Ag')[1] + 6
+        for i, line in enumerate(lines):
+            x = name_x
+            words = line.split(' ')
+            for word in words:
+                if 'Ticketon' in word:
+                    w, h = get_text_size(word, bold_italic_font)
+                    draw.text((x, name_y + i * line_h), word, font=bold_italic_font, fill=(255,255,255,255))
+                    x += w + italic_font.getbbox(' ')[2]
+                else:
+                    w, h = get_text_size(word, italic_font)
+                    draw.text((x, name_y + i * line_h), word, font=italic_font, fill=(255,255,255,255))
+                    x += w + italic_font.getbbox(' ')[2]
         
-        # Разбиваем текст на строки (вручную, не используя reportlab.lib.textsplit)
-        words = thanks_text.split()
-        lines = []
-        current_line = ""
-        max_chars_per_line = 60  # Примерно 60 символов в строке
-        
-        for word in words:
-            if len(current_line) + len(word) + 1 <= max_chars_per_line:
-                current_line += (" " + word if current_line else word)
-            else:
-                lines.append(current_line)
-                current_line = word
-        
-        if current_line:  # Добавляем последнюю строку
-            lines.append(current_line)
-        
-        # Рисуем текст благодарности по строкам
-        text_y = height - 350
-        for line in lines:
-            c.drawCentredString(width/2, text_y, line)
-            text_y -= 25
-        
-        # Блок с часами (зеленая стрелка)
-        if hours:
-            # Рисуем зеленую стрелку справа
-            c.setFillColorRGB(76/255, 175/255, 80/255)  # Зеленый
-            arrow_width, arrow_height = 300, 80
-            arrow_x, arrow_y = width - arrow_width - 50, 120
-            
-            # Рисуем многоугольник стрелки
-            p = c.beginPath()
-            p.moveTo(arrow_x, arrow_y + arrow_height)  # Левый нижний угол
-            p.lineTo(arrow_x, arrow_y)  # Левый верхний угол
-            p.lineTo(arrow_x + arrow_width - 30, arrow_y)  # Правый верхний угол
-            p.lineTo(arrow_x + arrow_width, arrow_y + arrow_height/2)  # Кончик стрелки
-            p.lineTo(arrow_x + arrow_width - 30, arrow_y + arrow_height)  # Правый нижний угол
-            p.close()
-            c.drawPath(p, fill=True, stroke=False)
-            
-            # Добавляем текст часов
-            c.setFillColorRGB(1, 1, 1)  # Белый текст
-            c.setFont("Helvetica-Bold", 40)
-            c.drawString(arrow_x + 50, arrow_y + arrow_height/2 - 10, str(hours))
-            c.setFont("Helvetica", 20)
-            c.drawString(arrow_x + 50, arrow_y + 10, "hours")
-            
-            # Рисуем круглую печать
-            c.circle(arrow_x + arrow_width - 50, arrow_y + arrow_height/2, 30, stroke=True, fill=False)
-        
-        # Логотип компании в левом нижнем углу
-        c.setFillColorRGB(76/255, 175/255, 80/255)  # Зеленый 
-        logo_x, logo_y = 80, 80
-        c.rect(logo_x - 10, logo_y - 10, 60, 60, fill=True, stroke=False)
-        
-        c.setFillColorRGB(1, 1, 1)  # Белый для буквы F
-        c.setFont("Helvetica-Bold", 40)
-        c.drawString(logo_x, logo_y, "F")
-        
-        c.setFillColorRGB(0.3, 0.3, 0.3)  # Серый для текста логотипа
-        c.drawString(logo_x + 60, logo_y, "FREEDOM")
-        c.drawString(logo_x + 60, logo_y - 40, "TICKETON")
-        
-        # Подпись директора
-        c.setFillColorRGB(0, 0, 0)  # Черный текст
-        c.setFont("Helvetica", 14)
-        director_name = leader_name if leader_name else "Torgumakova V. K."
-        c.drawRightString(width - 100, 100, director_name)
-        c.drawRightString(width - 100, 80, "director")
-        
-        if os.path.exists(temp_png_path):
-            with open(temp_png_path, 'rb') as f:
-                png_data = f.read()
-            os.remove(temp_png_path)  # Удаляем временный файл
-            return png_data, True
+        # Рисуем стрелку с остриём только слева, справа — ровно
+        arrow_w, arrow_height = 540, 110
+        arrow = PILImage.new('RGBA', (arrow_w, arrow_height), (0,0,0,0))
+        adraw = ImageDraw.Draw(arrow)
+        points = [
+            (0, arrow_height//2), (40, 0), (arrow_w, 0), (arrow_w, arrow_height), (40, arrow_height)
+        ]
+        adraw.polygon(points, fill=(76,175,80,255))
+
+        margin = 18
+        gap = 14
+        gap_hours = 6
+        section_w = (arrow_w - 2 * margin - 2 * gap) // 3
+        center_y = arrow_height // 2
+
+        # Шрифты для стрелки
+        impact_25 = ImageFont.truetype(impact_path, size=25)
+        impact_19_9 = ImageFont.truetype(impact_path, size=20)
+        impact_18 = ImageFont.truetype(impact_path, size=18)
+
+        # Левая секция: часы
+        hours_text = f"{int(round(hours)):02d}"
+        hw, hh = get_text_size(hours_text, impact_25)
+        hlabel = "hours"
+        hlw, hlh = get_text_size(hlabel, impact_18)
+        line_w = section_w * 0.8
+        total_h = hh + gap + hlh
+        base_y = center_y - total_h // 2 - 10
+        hours_x = margin + (section_w - hw) // 2
+        hours_y = base_y
+        adraw.text((hours_x, hours_y), hours_text, font=impact_25, fill=(255,255,255,255))
+        line_y = hours_y + hh + gap
+        line_x1 = margin + (section_w - line_w) // 2
+        line_x2 = line_x1 + line_w
+        adraw.line([(line_x1, line_y), (line_x2, line_y)], fill=(255,255,255,255), width=4)
+        hlabel_x = margin + (section_w - hlw) // 2
+        hlabel_y = line_y + gap_hours
+        adraw.text((hlabel_x, hlabel_y), hlabel, font=impact_18, fill=(255,255,255,255))
+
+        # Центральная секция: печать (крупнее, строго по центру секции)
+        if os.path.exists(stamp_path):
+            stamp = PILImage.open(stamp_path).convert('RGBA')
+            stamp_size = int(arrow_height * 0.82)
+            stamp = stamp.resize((stamp_size, stamp_size), PILImage.LANCZOS)
+            stamp_x = margin + section_w + gap + (section_w - stamp_size)//2
+            stamp_y = center_y - stamp_size//2
+            arrow.paste(stamp, (stamp_x, stamp_y), stamp)
+
+        # Правая секция: подпись и director (по центру секции, между ними больше расстояния)
+        sign_text = "Torgunakova V. K."
+        sign_font = impact_19_9
+        sign_w, sign_h = get_text_size(sign_text, sign_font)
+        dir_text = "director"
+        dir_font = impact_18
+        dir_w, dir_h = get_text_size(dir_text, dir_font)
+        # Центрируем всю группу по вертикали секции
+        group_h = sign_h + 12 + dir_h
+        group_y = center_y - group_h // 2
+        sign_x = margin + 2*section_w + 2*gap + (section_w - sign_w)//2
+        sign_y = group_y
+        adraw.text((sign_x, sign_y), sign_text, font=sign_font, fill=(0,0,0,255))
+        dir_x = margin + 2*section_w + 2*gap + (section_w - dir_w)//2
+        dir_y = sign_y + sign_h + 12
+        adraw.text((dir_x, dir_y), dir_text, font=dir_font, fill=(0,0,0,255))
+
+        arrow_x = width - arrow_w
+        arrow_y = height - arrow_height - 60
+        img.paste(arrow, (arrow_x, arrow_y), arrow)
+
+        temp_dir = tempfile.mkdtemp()
+        temp_img_path = os.path.join(temp_dir, 'cert.png')
+        img.convert('RGB').save(temp_img_path, 'PNG')
+
+        temp_pdf_path = os.path.join(temp_dir, 'certificate.pdf')
+        c = canvas.Canvas(temp_pdf_path, pagesize=(width, height))
+        c.drawImage(temp_img_path, 0, 0, width=width, height=height)
+        c.save()
+
+        with open(temp_pdf_path, 'rb') as f:
+            pdf_data = f.read()
+        os.remove(temp_img_path)
+        os.remove(temp_pdf_path)
+        os.rmdir(temp_dir)
+        return pdf_data
     except Exception as e:
         print(f"Ошибка при создании PNG: {e}")
     
@@ -735,7 +760,7 @@ def generate_certificate(request, participant_id):
         event_name = event.name
         event_date = event.date.strftime("%d.%m.%Y")
         leader_name = f"{event.leader.first_name} {event.leader.last_name}" if event.leader else None
-        file_data = generate_certificate_pdf(full_name, hours, event_name, event_date, leader_name)
+        file_data = create_certificate_pdf(full_name, hours, event_name, event_date, leader_name)
         participant.hours_awarded = 0
         participant.save()
         filename = f"certificate_{scanner.last_name}_{event.name}.pdf"
@@ -861,7 +886,7 @@ def generate_scanner_certificate(request, scanner_id):
         } for p in participations]
         full_name = f"{scanner.first_name} {scanner.last_name}".upper()
         hours = round(total_hours)
-        file_data = generate_certificate_pdf(full_name, hours, period=period_text, events_list=events_list)
+        file_data = create_certificate_pdf(full_name, hours, period=period_text, events_list=events_list)
         for participant in participations:
             participant.hours_awarded = 0
             participant.save()
@@ -1162,168 +1187,190 @@ def all_scanners_list(request):
     return render(request, 'core/all_scanners.html', context)
 
 def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader_name=None, period=None, events_list=None):
-    """
-    Создает PDF-сертификат в стиле, показанном на фото
-    """
-    # Создаем временный файл для PDF
-    temp_dir = tempfile.mkdtemp()
-    temp_pdf_path = os.path.join(temp_dir, "certificate.pdf")
-    
-    # Настраиваем параметры страницы (альбомная ориентация, A4)
-    width, height = landscape(A4)
-    
-    # Создаем PDF-документ
-    c = canvas.Canvas(temp_pdf_path, pagesize=landscape(A4))
-    
-    # Жёлтый фон
-    c.setFillColorRGB(235/255, 199/255, 0/255)  # RGB-эквивалент желтого фона
-    c.rect(0, 0, width, height, fill=True, stroke=False)
-    
-    # Черные полосы сверху и снизу (киноленты)
-    c.setFillColorRGB(0.1, 0.1, 0.1)  # Почти черный
-    stripe_height = 50
-    for i in range(0, int(width), 150):
-        # Верхняя полоса
-        c.rect(i, height - stripe_height, 100, stripe_height, fill=True, stroke=False)
-        # Нижняя полоса
-        c.rect(i, 0, 100, stripe_height, fill=True, stroke=False)
-    
-    # Рисуем билет в левом верхнем углу
-    c.setStrokeColorRGB(0, 0, 0)
-    c.setFillColorRGB(1, 1, 1)  # Белый фон билета
-    ticket_x, ticket_y = 80, height - 200
-    ticket_width, ticket_height = 150, 150
-    c.rect(ticket_x, ticket_y - ticket_height, ticket_width, ticket_height, stroke=True, fill=True)
-    
-    # Текст на билете
-    c.setFillColorRGB(0, 0, 0)  # Черный текст
-    c.setFont("Helvetica-Bold", 18)
-    c.drawString(ticket_x + 10, ticket_y - 30, "TICKET")
-    c.drawString(ticket_x + 10, ticket_y - 60, "VIP")
-    
-    # Основной заголовок "CERTIFICAT"
-    c.setFillColorRGB(1, 1, 1)  # Белый текст
-    c.setFont("Helvetica-Bold", 90)
-    c.drawCentredString(width/2, height - 150, "CERTIFICAT")
-    
-    # Подзаголовок "OF APPRECIATION"
-    c.setFont("Helvetica-Bold", 40)
-    c.drawRightString(width - 100, height - 180, "OF APPRECIATION")
-    
-    # Текст "This certificate is presented to:"
-    c.setFont("Helvetica", 20)
-    c.drawCentredString(width/2, height - 220, "This certificate is presented to:")
-    
-    # Имя участника (зеленым шрифтом)
-    if name:
-        c.setFillColorRGB(120/255, 220/255, 80/255)  # Зеленый
-        c.setFont("Helvetica-Bold", 50)
-        c.drawCentredString(width/2, height - 280, name)
-    
-    # Текст благодарности (белым шрифтом)
-    c.setFillColorRGB(1, 1, 1)  # Белый текст
-    c.setFont("Helvetica", 16)
-    
-    thanks_text = "We, the Tiketon company, would like to sincerely express our gratitude and "
-    thanks_text += "appreciation towards your incredible work and support in organizing "
-    if period:
-        thanks_text += f"our events in {period}. "
-    else:
-        thanks_text += "our events in 2024 and 2025. "
-    thanks_text += "You played important role in organization of "
-    thanks_text += "each event. We hope to see you again in upcoming events!"
-    
-    # Разбиваем текст на строки (вручную, не используя reportlab.lib.textsplit)
-    words = thanks_text.split()
-    lines = []
-    current_line = ""
-    max_chars_per_line = 60  # Примерно 60 символов в строке
-    
+    from PIL import Image as PILImage, ImageDraw, ImageFont
+    from reportlab.pdfgen import canvas
+    import tempfile, os
+
+    base_dir = settings.BASE_DIR
+    bg_path = os.path.join(base_dir, 'static', 'templates', 'background.png')
+    overlay_path = os.path.join(base_dir, 'static', 'templates', 'back_black.png')
+    logo_path = os.path.join(base_dir, 'static', 'templates', 'image.png')
+    stamp_path = os.path.join(base_dir, 'static', 'templates', 'stamp.png')
+    impact_path = os.path.join(base_dir, 'static', 'fonts', 'IMPACT.TTF')
+    sans_italic = os.path.join(base_dir, 'static', 'fonts', 'OpenSans-Italic.ttf')
+    sans_bold_italic = os.path.join(base_dir, 'static', 'fonts', 'OpenSans-BoldItalic.ttf')
+
+    width, height = 1123, 794
+    bg = PILImage.open(bg_path).convert('RGBA').resize((width, height))
+    overlay = PILImage.open(overlay_path).convert('RGBA').resize((width, height))
+    img = PILImage.alpha_composite(bg, overlay)
+    draw = ImageDraw.Draw(img)
+
+    # Логотип в левый нижний угол (logo_scale = 0.52)
+    logo = PILImage.open(logo_path).convert('RGBA')
+    logo_w, logo_h = logo.size
+    logo_scale = 0.52
+    logo = logo.resize((int(logo_w * logo_scale), int(logo_h * logo_scale)), PILImage.LANCZOS)
+    img.paste(logo, (40, height - logo.height - 40), logo)
+
+    # Шрифты
+    impact = ImageFont.truetype(impact_path, size=98)
+    impact_name = ImageFont.truetype(impact_path, size=64)
+    sans_bold_italic_f = ImageFont.truetype(sans_bold_italic, size=24)
+    sans_italic_f = ImageFont.truetype(sans_italic, size=18)
+    sans_italic_f_small = ImageFont.truetype(sans_italic, size=16)
+    sans_bold_italic_f_small = ImageFont.truetype(sans_bold_italic, size=18)
+
+    def get_text_size(text, font):
+        bbox = font.getbbox(text)
+        return bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+    # CERTIFICAT
+    cert_text = "CERTIFICAT"
+    cert_w, cert_h = get_text_size(cert_text, impact)
+    cert_x = width - cert_w - 80
+    cert_y = 70
+    draw.text((cert_x, cert_y), cert_text, font=impact, fill=(255,255,255,255))
+
+    # OF APPRECIATION
+    app_text = "OF APPRECIATION"
+    app_w, app_h = get_text_size(app_text, sans_bold_italic_f)
+    app_x = width - app_w - 85
+    app_y = cert_y + cert_h + 40
+    draw.text((app_x, app_y), app_text, font=sans_bold_italic_f, fill=(255,255,255,255))
+
+    # This certificate is presented to:
+    pres_text = "This certificate is presented to:"
+    pres_w, pres_h = get_text_size(pres_text, sans_italic_f)
+    pres_x = width - pres_w - 120
+    pres_y = app_y + app_h + 40
+    draw.text((pres_x, pres_y), pres_text, font=sans_italic_f, fill=(255,255,255,255))
+
+    # NAME
+    name_text = name
+    name_w, name_h = get_text_size(name_text, impact_name)
+    name_x = width - name_w - 120
+    name_y = pres_y + pres_h + 10
+    draw.text((name_x, name_y), name_text, font=impact_name, fill=(76,175,80,255))
+
+    # Блок благодарности (как на скриншоте)
+    thanks_text = (
+        "We, the Ticketon company, would like to sincerely express our gratitude and appreciation "
+        "towards your incredible work and support in organizing our events in 2024 and 2025. "
+        "You played important role in organization of each event. We hope to see you again in upcoming_events!"
+    )
+    italic_font = ImageFont.truetype(sans_italic, size=22)
+    bold_italic_font = ImageFont.truetype(sans_bold_italic, size=22)
+    underline_font = italic_font
+    start_x = name_x
+    max_width = 600
+    start_y = name_y + name_h + 40
+    # Разбиваем на слова, чтобы upcoming_events! не переносился
+    words = thanks_text.split(' ')
+    x, y = start_x, start_y
+    line_h = italic_font.getbbox('Ag')[3] - italic_font.getbbox('Ag')[1] + 6
+    def draw_word(word, font, color, underline=False):
+        nonlocal x, y
+        display_word = word.replace('upcoming_events!', 'upcoming events!')
+        w, h = get_text_size(display_word, font)
+        if x + w > start_x + max_width:
+            x = start_x
+            y += line_h
+        draw.text((x, y), display_word, font=font, fill=color)
+        if underline:
+            uy = y + h + 2
+            draw.line([(x, uy), (x + w, uy)], fill=color, width=2)
+        x += w + italic_font.getbbox(' ')[2]
     for word in words:
-        if len(current_line) + len(word) + 1 <= max_chars_per_line:
-            current_line += (" " + word if current_line else word)
+        if 'Ticketon' in word:
+            draw_word(word, bold_italic_font, (255,255,255,255))
         else:
-            lines.append(current_line)
-            current_line = word
+            draw_word(word, italic_font, (255,255,255,255))
     
-    if current_line:  # Добавляем последнюю строку
-        lines.append(current_line)
-    
-    # Рисуем текст благодарности по строкам
-    text_y = height - 350
-    for line in lines:
-        c.drawCentredString(width/2, text_y, line)
-        text_y -= 25
-    
-    # Блок с часами (зеленая стрелка)
-    if hours:
-        # Рисуем зеленую стрелку справа
-        c.setFillColorRGB(76/255, 175/255, 80/255)  # Зеленый
-        arrow_width, arrow_height = 300, 80
-        arrow_x, arrow_y = width - arrow_width - 50, 120
-        
-        # Рисуем многоугольник стрелки
-        p = c.beginPath()
-        p.moveTo(arrow_x, arrow_y + arrow_height)  # Левый нижний угол
-        p.lineTo(arrow_x, arrow_y)  # Левый верхний угол
-        p.lineTo(arrow_x + arrow_width - 30, arrow_y)  # Правый верхний угол
-        p.lineTo(arrow_x + arrow_width, arrow_y + arrow_height/2)  # Кончик стрелки
-        p.lineTo(arrow_x + arrow_width - 30, arrow_y + arrow_height)  # Правый нижний угол
-        p.close()
-        c.drawPath(p, fill=True, stroke=False)
-        
-        # Добавляем текст часов
-        c.setFillColorRGB(1, 1, 1)  # Белый текст
-        c.setFont("Helvetica-Bold", 40)
-        c.drawString(arrow_x + 50, arrow_y + arrow_height/2 - 10, str(hours))
-        c.setFont("Helvetica", 20)
-        c.drawString(arrow_x + 50, arrow_y + 10, "hours")
-        
-        # Рисуем круглую печать
-        c.circle(arrow_x + arrow_width - 50, arrow_y + arrow_height/2, 30, stroke=True, fill=False)
-    
-    # Логотип компании в левом нижнем углу
-    c.setFillColorRGB(76/255, 175/255, 80/255)  # Зеленый 
-    logo_x, logo_y = 80, 80
-    c.rect(logo_x - 10, logo_y - 10, 60, 60, fill=True, stroke=False)
-    
-    c.setFillColorRGB(1, 1, 1)  # Белый для буквы F
-    c.setFont("Helvetica-Bold", 40)
-    c.drawString(logo_x, logo_y, "F")
-    
-    c.setFillColorRGB(0.3, 0.3, 0.3)  # Серый для текста логотипа
-    c.drawString(logo_x + 60, logo_y, "FREEDOM")
-    c.drawString(logo_x + 60, logo_y - 40, "TICKETON")
-    
-    # Подпись директора
-    c.setFillColorRGB(0, 0, 0)  # Черный текст
-    c.setFont("Helvetica", 14)
-    director_name = leader_name if leader_name else "Torgumakova V. K."
-    c.drawRightString(width - 100, 100, director_name)
-    c.drawRightString(width - 100, 80, "director")
-    
-    # Завершаем создание PDF
+    # Рисуем стрелку с остриём только слева, справа — ровно
+    arrow_w, arrow_height = 540, 110
+    arrow = PILImage.new('RGBA', (arrow_w, arrow_height), (0,0,0,0))
+    adraw = ImageDraw.Draw(arrow)
+    points = [
+        (0, arrow_height//2), (40, 0), (arrow_w, 0), (arrow_w, arrow_height), (40, arrow_height)
+    ]
+    adraw.polygon(points, fill=(76,175,80,255))
+
+    margin = 18
+    gap = 14
+    gap_hours = 6
+    section_w = (arrow_w - 2 * margin - 2 * gap) // 3
+    center_y = arrow_height // 2
+
+    # Шрифты для стрелки
+    impact_25 = ImageFont.truetype(impact_path, size=25)
+    impact_19_9 = ImageFont.truetype(impact_path, size=20)
+    impact_18 = ImageFont.truetype(impact_path, size=18)
+
+    # Левая секция: часы
+    hours_text = f"{int(round(hours)):02d}"
+    hw, hh = get_text_size(hours_text, impact_25)
+    hlabel = "hours"
+    hlw, hlh = get_text_size(hlabel, impact_18)
+    line_w = section_w * 0.8
+    total_h = hh + gap + hlh
+    base_y = center_y - total_h // 2 - 10
+    hours_x = margin + (section_w - hw) // 2
+    hours_y = base_y
+    adraw.text((hours_x, hours_y), hours_text, font=impact_25, fill=(255,255,255,255))
+    line_y = hours_y + hh + gap
+    line_x1 = margin + (section_w - line_w) // 2
+    line_x2 = line_x1 + line_w
+    adraw.line([(line_x1, line_y), (line_x2, line_y)], fill=(255,255,255,255), width=4)
+    hlabel_x = margin + (section_w - hlw) // 2
+    hlabel_y = line_y + gap_hours
+    adraw.text((hlabel_x, hlabel_y), hlabel, font=impact_18, fill=(255,255,255,255))
+
+    # Центральная секция: печать (крупнее, строго по центру секции)
+    if os.path.exists(stamp_path):
+        stamp = PILImage.open(stamp_path).convert('RGBA')
+        stamp_size = int(arrow_height * 0.82)
+        stamp = stamp.resize((stamp_size, stamp_size), PILImage.LANCZOS)
+        stamp_x = margin + section_w + gap + (section_w - stamp_size)//2
+        stamp_y = center_y - stamp_size//2
+        arrow.paste(stamp, (stamp_x, stamp_y), stamp)
+
+    # Правая секция: подпись и director (по центру секции, между ними больше расстояния)
+    sign_text = "Torgunakova V. K."
+    sign_font = impact_19_9
+    sign_w, sign_h = get_text_size(sign_text, sign_font)
+    dir_text = "director"
+    dir_font = impact_18
+    dir_w, dir_h = get_text_size(dir_text, dir_font)
+    # Центрируем всю группу по вертикали секции
+    group_h = sign_h + 12 + dir_h
+    group_y = center_y - group_h // 2
+    sign_x = margin + 2*section_w + 2*gap + (section_w - sign_w)//2
+    sign_y = group_y
+    adraw.text((sign_x, sign_y), sign_text, font=sign_font, fill=(0,0,0,255))
+    dir_x = margin + 2*section_w + 2*gap + (section_w - dir_w)//2
+    dir_y = sign_y + sign_h + 12
+    adraw.text((dir_x, dir_y), dir_text, font=dir_font, fill=(0,0,0,255))
+
+    arrow_x = width - arrow_w
+    arrow_y = height - arrow_height - 60
+    img.paste(arrow, (arrow_x, arrow_y), arrow)
+
+    temp_dir = tempfile.mkdtemp()
+    temp_img_path = os.path.join(temp_dir, 'cert.png')
+    img.convert('RGB').save(temp_img_path, 'PNG')
+
+    temp_pdf_path = os.path.join(temp_dir, 'certificate.pdf')
+    c = canvas.Canvas(temp_pdf_path, pagesize=(width, height))
+    c.drawImage(temp_img_path, 0, 0, width=width, height=height)
     c.save()
-    
-    try:
-        # Открываем созданный PDF и возвращаем его содержимое
-        with open(temp_pdf_path, 'rb') as f:
-            pdf_data = f.read()
-        
-        # Очищаем временную директорию
-        os.remove(temp_pdf_path)
-        os.rmdir(temp_dir)
-        
-        return pdf_data
-    except Exception as e:
-        print(f"Ошибка при чтении PDF: {e}")
-        # Очищаем временную директорию при ошибке
-        try:
-            os.remove(temp_pdf_path)
-            os.rmdir(temp_dir)
-        except:
-            pass
-        return None
+
+    with open(temp_pdf_path, 'rb') as f:
+        pdf_data = f.read()
+    os.remove(temp_img_path)
+    os.remove(temp_pdf_path)
+    os.rmdir(temp_dir)
+    return pdf_data
 
 def convert_pptx_to_pdf(pptx_path):
     """
