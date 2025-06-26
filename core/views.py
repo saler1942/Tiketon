@@ -726,76 +726,23 @@ def get_certificate_from_template(name, hours, event_name=None, event_date=None,
 
 @team_leader_required
 def generate_certificate(request, participant_id):
-    """
-    Генерирует благодарственное письмо на основе шаблона PowerPoint
-    и возвращает его в виде PDF
-    """
     try:
         participant = EventParticipant.objects.get(id=participant_id)
         event = participant.event
         scanner = participant.volunteer
-        
-        # Полное имя сканера для замены (в верхнем регистре)
         full_name = f"{scanner.first_name} {scanner.last_name}".upper()
-        
-        # Подготавливаем данные для сертификата
+        hours = round(participant.hours_awarded)
         event_name = event.name
         event_date = event.date.strftime("%d.%m.%Y")
         leader_name = f"{event.leader.first_name} {event.leader.last_name}" if event.leader else None
-        hours = participant.hours_awarded
-        
-        # Создаем сертификат на основе шаблона PPTX
-        temp_pptx_path, temp_dir = get_certificate_from_template(
-            name=full_name, 
-            hours=hours,
-            event_name=event_name,
-            event_date=event_date,
-            leader_name=leader_name
-        )
-        
-        try:
-            # Конвертируем в PDF
-            pdf_data = convert_pptx_to_pdf(temp_pptx_path)
-            
-            if pdf_data:
-                # Обнуляем часы сканера при получении благодарственного письма
-                participant.hours_awarded = 0
-                participant.save()
-                
-                # Отдаем PDF для скачивания
-                response = HttpResponse(pdf_data, content_type='application/pdf')
-                response['Content-Disposition'] = f'attachment; filename="certificate_{scanner.last_name}_{event.name}.pdf"'
-                return response
-            else:
-                # Если конвертация не удалась, возвращаем оригинальный PPTX
-                with open(temp_pptx_path, 'rb') as f:
-                    pptx_data = f.read()
-                
-                # Обнуляем часы сканера при получении благодарственного письма
-                participant.hours_awarded = 0
-                participant.save()
-                
-                # Отдаем PPTX для скачивания
-                response = HttpResponse(
-                    pptx_data, 
-                    content_type='application/vnd.openxmlformats-officedocument.presentationml.presentation'
-                )
-                response['Content-Disposition'] = f'attachment; filename="certificate_{scanner.last_name}_{event.name}.pptx"'
-                return response
-        finally:
-            # Очищаем временные файлы
-            try:
-                os.remove(temp_pptx_path)
-                if os.path.exists(temp_pptx_path.replace('.pptx', '.pdf')):
-                    os.remove(temp_pptx_path.replace('.pptx', '.pdf'))
-                os.rmdir(temp_dir)
-            except Exception as e:
-                print(f"Ошибка при удалении временных файлов: {e}")
-    
+        file_data = generate_certificate_pdf(full_name, hours, event_name, event_date, leader_name)
+        participant.hours_awarded = 0
+        participant.save()
+        filename = f"certificate_{scanner.last_name}_{event.name}.pdf"
+        response = HttpResponse(file_data, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
     except Exception as e:
-        import traceback
-        print(f"Ошибка при генерации сертификата: {e}")
-        print(traceback.format_exc())
         return JsonResponse({"error": str(e)}, status=400)
 
 @team_leader_required
