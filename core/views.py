@@ -739,6 +739,17 @@ def generate_certificate(request, participant_id):
         participant.hours_awarded = 0
         participant.save()
         filename = f"certificate_{scanner.last_name}_{event.name}.pdf"
+        user_agent = request.META.get('HTTP_USER_AGENT', '').lower()
+        is_mobile = any(x in user_agent for x in ['iphone', 'android', 'ipad', 'mobile'])
+        if is_mobile:
+            import io, zipfile
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w') as zipf:
+                zipf.writestr(filename, file_data)
+            zip_buffer.seek(0)
+            response = HttpResponse(zip_buffer.read(), content_type='application/zip')
+            response['Content-Disposition'] = f'attachment; filename="{scanner.last_name}_{event.name}.zip"'
+            return response
         response = HttpResponse(file_data, content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
