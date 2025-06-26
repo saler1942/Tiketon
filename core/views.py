@@ -842,67 +842,44 @@ def generate_all_certificates(request, event_id):
 
 @team_leader_required
 def generate_scanner_certificate(request, scanner_id):
-    """
-    Генерирует благодарственное письмо сканеру за все мероприятия, в которых он участвовал
-    """
     try:
         scanner = get_object_or_404(Scanner, id=scanner_id)
         participations = EventParticipant.objects.filter(volunteer=scanner).select_related('event')
         if not participations.exists():
             return JsonResponse({"error": "Сканер еще не участвовал на мероприятиях"}, status=400)
-        total_hours_query = participations.aggregate(
-            total_hours=Sum('hours_awarded', output_field=FloatField())
-        )
-        total_hours = total_hours_query['total_hours'] or 0.0
+        total_hours = participations.aggregate(total_hours=Sum('hours_awarded', output_field=FloatField()))['total_hours'] or 0.0
         if total_hours == 0:
             return JsonResponse({"error": "Сканер уже получил благодарственное письмо и у него нет часов"}, status=400)
-        date_range = participations.aggregate(
-            first_event=Min('event__date'),
-            last_event=Max('event__date')
-        )
+        date_range = participations.aggregate(first_event=Min('event__date'), last_event=Max('event__date'))
         first_date = date_range['first_event']
         last_date = date_range['last_event']
         period_text = f"{first_date.strftime('%d.%m.%Y')} - {last_date.strftime('%d.%m.%Y')}"
-        events_list = []
-        for p in participations:
-            events_list.append({
-                'name': p.event.name,
-                'date': p.event.date.strftime("%d.%m.%Y"),
-                'hours': p.hours_awarded
-            })
+        events_list = [{
+            'name': p.event.name,
+            'date': p.event.date.strftime("%d.%m.%Y"),
+            'hours': p.hours_awarded
+        } for p in participations]
         full_name = f"{scanner.first_name} {scanner.last_name}".upper()
-        temp_pptx_path, temp_dir = get_certificate_from_template(
-            name=full_name,
-            hours=total_hours,
-            period=period_text,
-            events_list=events_list
-        )
-        try:
-            pdf_data = convert_pptx_to_pdf(temp_pptx_path)
-            for participant in participations:
-                participant.hours_awarded = 0
-                participant.save()
-            if pdf_data:
-                response = HttpResponse(pdf_data, content_type='application/pdf')
-                response['Content-Disposition'] = f'attachment; filename="certificate_{scanner.last_name}_{scanner.first_name}.pdf"'
-                return response
-            else:
-                with open(temp_pptx_path, 'rb') as f:
-                    pptx_data = f.read()
-                response = HttpResponse(
-                    pptx_data, 
-                    content_type='application/vnd.openxmlformats-officedocument.presentationml.presentation'
-                )
-                response['Content-Disposition'] = f'attachment; filename="certificate_{scanner.last_name}_{scanner.first_name}.pptx"'
-                return response
-        finally:
-            try:
-                os.remove(temp_pptx_path)
-                if os.path.exists(temp_pptx_path.replace('.pptx', '.pdf')):
-                    os.remove(temp_pptx_path.replace('.pptx', '.pdf'))
-                os.rmdir(temp_dir)
-            except Exception as e:
-                print(f"Ошибка при удалении временных файлов: {e}")
+        hours = round(total_hours)
+        file_data = generate_certificate_pdf(full_name, hours, period=period_text, events_list=events_list)
+        for participant in participations:
+            participant.hours_awarded = 0
+            participant.save()
+        filename = f"certificate_{scanner.last_name}_{scanner.first_name}.pdf"
+        user_agent = request.META.get('HTTP_USER_AGENT', '').lower()
+        is_mobile = any(x in user_agent for x in ['iphone', 'android', 'ipad', 'mobile'])
+        if is_mobile:
+            import io, zipfile
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w') as zipf:
+                zipf.writestr(filename, file_data)
+            zip_buffer.seek(0)
+            response = HttpResponse(zip_buffer.read(), content_type='application/zip')
+            response['Content-Disposition'] = f'attachment; filename="{scanner.last_name}_{scanner.first_name}.zip"'
+            return response
+        response = HttpResponse(file_data, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
     except Exception as e:
         import traceback
         trace = traceback.format_exc()
