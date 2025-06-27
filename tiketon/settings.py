@@ -29,7 +29,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-=wp-b!1k650wlytu39m63sbba2srsl_#cj8)y7o*k(7k&d*r1q')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
+DEBUG = False
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
@@ -171,3 +171,5 @@ CACHES = {
 
 # Кеширование сессий
 SESSION_ENGINE = 'django.contrib.sessions.backends.cached_db'
+
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
