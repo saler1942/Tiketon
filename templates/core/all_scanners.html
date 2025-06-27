@@ -6,7 +6,7 @@
 <div class="flex justify-between items-center mb-3" style="flex-wrap: wrap; gap: 1rem;">
     <h1>Список сканеров</h1>
     <div class="flex gap-2" style="flex-wrap: wrap;">
-        <a href="{% url 'scanner_certificates' %}" class="btn btn-success">Благодарственные письма</a>
+        <a href="{% url 'scanner_certificates' %}" class="btn btn-success">Сертификаты</a>
     </div>
 </div>
 
@@ -27,6 +27,12 @@
         <button type="submit" class="btn btn-primary" style="width: 100%;">Найти</button>
     </div>
 </form>
+
+<!-- Индикатор загрузки -->
+<div id="loading-indicator" style="display: none; text-align: center; padding: 20px;">
+    <div class="spinner" style="display: inline-block; width: 40px; height: 40px; border: 4px solid rgba(0, 166, 81, 0.3); border-radius: 50%; border-top-color: #00a651; animation: spin 1s linear infinite;"></div>
+    <p style="margin-top: 10px; color: #666;">Загрузка данных...</p>
+</div>
 
 <div id="modal-error" style="display:none;position:fixed;z-index:99999;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.45);align-items:center;justify-content:center;">
   <div style="background:#fff;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,0.18);padding:2.5rem 2rem;max-width:90vw;min-width:320px;text-align:center;position:relative;">
@@ -56,7 +62,7 @@
                 <td>
                     <div class="dropdown d-inline-block">
                         <button class="btn btn-success dropdown-toggle" type="button" id="certDropdown{{ scanner.id }}" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;">
-                            Благодарность
+                            Сертификат
                         </button>
                         <div class="dropdown-menu" aria-labelledby="certDropdown{{ scanner.id }}">
                             <a class="dropdown-item" href="#" onclick="downloadCertificate({{ scanner.id }}, this); return false;">PDF</a>
@@ -67,36 +73,31 @@
             </tr>
             <tr id="events-{{ scanner.id }}" style="display: none;">
                 <td colspan="5">
-                    <div style="padding: 1rem; background-color: #f8f9fa;">
-                        <h3 style="margin-bottom: 0.5rem;">Участие в мероприятиях</h3>
-                        {% if scanner.events %}
-                        <table style="width: 100%;">
-                            <thead>
-                                <tr>
-                                    <th>Мероприятие</th>
-                                    <th>Дата</th>
-                                    <th>Часы</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for event in scanner.events %}
-                                <tr>
-                                    <td>{{ event.name }}</td>
-                                    <td>{{ event.date }}</td>
-                                    <td>{{ event.hours }}</td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                        {% else %}
-                        <p>Нет участия в мероприятиях</p>
-                        {% endif %}
+                    <div id="events-content-{{ scanner.id }}" style="padding: 1rem; background-color: #f8f9fa;">
+                        <div class="events-loading" style="text-align: center; padding: 20px;">
+                            <div class="spinner" style="display: inline-block; width: 20px; height: 20px; border: 3px solid rgba(0, 166, 81, 0.3); border-radius: 50%; border-top-color: #00a651; animation: spin 1s linear infinite;"></div>
+                            <p style="margin-top: 10px; color: #666;">Загрузка мероприятий...</p>
+                        </div>
                     </div>
                 </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+</div>
+
+<div class="flex justify-center mt-3" style="flex-wrap: wrap;">
+    <nav aria-label="Пагинация" style="width: 100%; max-width: 400px;">
+        <ul class="pagination" style="display: flex; gap: 0.5rem; list-style: none; padding: 0; justify-content: center; flex-wrap: wrap;">
+            {% if page_obj.has_previous %}
+                <li><a href="?{% if query %}q={{ query }}&{% endif %}{% if min_hours %}min_hours={{ min_hours }}&{% endif %}{% if max_hours %}max_hours={{ max_hours }}&{% endif %}page={{ page_obj.previous_page_number }}" class="btn btn-secondary">&laquo; Назад</a></li>
+            {% endif %}
+            <li style="padding: 0.5rem 1rem; text-align: center;">Стр. {{ page_obj.number }} из {{ page_obj.paginator.num_pages }}</li>
+            {% if page_obj.has_next %}
+                <li><a href="?{% if query %}q={{ query }}&{% endif %}{% if min_hours %}min_hours={{ min_hours }}&{% endif %}{% if max_hours %}max_hours={{ max_hours }}&{% endif %}page={{ page_obj.next_page_number }}" class="btn btn-secondary">Вперёд &raquo;</a></li>
+            {% endif %}
+        </ul>
+    </nav>
 </div>
 {% else %}
 <div class="card" style="text-align: center; padding: 3rem 1rem;">
@@ -108,11 +109,55 @@
 {% endblock %}
 
 {% block scripts %}
+<style>
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+</style>
+
 <script>
+    // Кеш для хранения уже загруженных данных о мероприятиях
+    const eventsCache = {};
+    
     function toggleEvents(scannerId) {
         const eventsRow = document.getElementById(`events-${scannerId}`);
+        const eventsContent = document.getElementById(`events-content-${scannerId}`);
+        
         if (eventsRow.style.display === 'none') {
             eventsRow.style.display = 'table-row';
+            
+            // Проверяем, есть ли данные в кеше
+            if (eventsCache[scannerId]) {
+                eventsContent.innerHTML = eventsCache[scannerId];
+            } else {
+                // Загружаем данные о мероприятиях через API
+                fetch(`/api/scanner-events/${scannerId}/`)
+                    .then(response => response.json())
+                    .then(data => {
+                        let html = '<h3 style="margin-bottom: 0.5rem;">Участие в мероприятиях</h3>';
+                        
+                        if (data.events && data.events.length > 0) {
+                            html += '<table style="width: 100%;">';
+                            html += '<thead><tr><th>Мероприятие</th><th>Дата</th><th>Часы</th></tr></thead><tbody>';
+                            
+                            data.events.forEach(event => {
+                                html += `<tr><td>${event.name}</td><td>${event.date}</td><td>${event.hours}</td></tr>`;
+                            });
+                            
+                            html += '</tbody></table>';
+                        } else {
+                            html += '<p>Нет участия в мероприятиях</p>';
+                        }
+                        
+                        // Сохраняем в кеш и отображаем
+                        eventsCache[scannerId] = html;
+                        eventsContent.innerHTML = html;
+                    })
+                    .catch(error => {
+                        eventsContent.innerHTML = '<p>Ошибка при загрузке данных</p>';
+                        console.error('Ошибка:', error);
+                    });
+            }
         } else {
             eventsRow.style.display = 'none';
         }
@@ -122,35 +167,33 @@
         document.getElementById('modal-error-text').textContent = message;
         document.getElementById('modal-error').style.display = 'flex';
     }
+    
     function closeModalError() {
         document.getElementById('modal-error').style.display = 'none';
     }
 
     function downloadCertificate(scannerId, el) {
         el.disabled = true;
-        fetch(`/certificates/scanner/${scannerId}/?format=pdf`, {headers: {'X-Requested-With': 'XMLHttpRequest'}})
-            .then(async response => {
-                if (!response.ok) {
-                    const data = await response.json();
-                    showModalError(data.error || 'Сканер не был на ивентах');
-                    el.disabled = false;
-                    return;
-                }
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `certificate_${scannerId}.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                window.URL.revokeObjectURL(url);
-                el.disabled = false;
-            })
-            .catch(() => {
-                showModalError('Ошибка при генерации сертификата');
-                el.disabled = false;
-            });
+        
+        // Показываем индикатор загрузки
+        document.getElementById('loading-indicator').style.display = 'block';
+        
+        // Открываем в новой вкладке для скачивания
+        const downloadUrl = `/certificates/scanner/${scannerId}/?format=pdf`;
+        const downloadWindow = window.open(downloadUrl, '_blank');
+        
+        // Скрываем индикатор загрузки через 2 секунды
+        setTimeout(() => {
+            document.getElementById('loading-indicator').style.display = 'none';
+            el.disabled = false;
+        }, 2000);
+        
+        // Если окно было заблокировано, показываем сообщение
+        if (!downloadWindow || downloadWindow.closed || typeof downloadWindow.closed === 'undefined') {
+            document.getElementById('loading-indicator').style.display = 'none';
+            showModalError('Пожалуйста, разрешите всплывающие окна для скачивания сертификата');
+            el.disabled = false;
+        }
     }
 </script>
 {% endblock %} 

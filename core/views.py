@@ -3,9 +3,11 @@ from django.contrib.auth import authenticate, login
 from django.contrib.auth.models import User, Group
 from django.contrib import messages
 from django.http import JsonResponse, HttpResponse, FileResponse
-from django.db.models import Q, Sum, Min, Max, FloatField
+from django.db.models import Q, Sum, Min, Max, FloatField, Count, Value, Case, When, IntegerField, F
 from django.db.models.functions import Coalesce
 from django.conf import settings
+from django.core.cache import cache
+from django.views.decorators.cache import cache_page
 import random
 import string
 import os
@@ -13,7 +15,7 @@ import io
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
-from datetime import datetime
+from datetime import datetime, timedelta
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter, A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -95,7 +97,7 @@ def events_list(request):
     # Фильтр по тимлидеру
     leader = request.GET.get('leader')
     if leader:
-        events = events.filter(leader__first_name__icontains=leader) | events.filter(leader__last_name__icontains=leader)
+        events = events.filter(created_by__first_name__icontains=leader) | events.filter(created_by__last_name__icontains=leader)
     # Пагинация
     paginator = Paginator(events, 20)
     page_number = request.GET.get('page')
@@ -117,7 +119,10 @@ def event_create(request):
         date = request.POST.get('date')
         start_date = request.POST.get('start_date')
         end_date = request.POST.get('end_date')
-        volunteers_required = request.POST.get('volunteers_required')
+        max_scanners = request.POST.get('max_scanners', 10)
+        location = request.POST.get('location', 'Астана')
+        description = request.POST.get('description', '')
+        
         # Если указан период, используем его, иначе обычную дату
         if start_date and end_date:
             event = Event.objects.create(
@@ -125,8 +130,10 @@ def event_create(request):
                 date=start_date,  # для обратной совместимости
                 start_date=start_date,
                 end_date=end_date,
-                volunteers_required=volunteers_required,
-                leader=request.user
+                max_scanners=max_scanners,
+                location=location,
+                description=description,
+                created_by=request.user
             )
         else:
             event = Event.objects.create(
@@ -134,23 +141,28 @@ def event_create(request):
                 date=date,
                 start_date=date if date else None,
                 end_date=date if date else None,
-                volunteers_required=volunteers_required,
-                leader=request.user
+                max_scanners=max_scanners,
+                location=location,
+                description=description,
+                created_by=request.user
             )
         return redirect('event_edit', event_id=event.id)
     return render(request, 'core/event_create.html', {'scanners': scanners})
 
 @team_leader_required
 def event_edit(request, event_id):
-    # Проверяем, что пользователь является создателем события или админом
     event = Event.objects.get(id=event_id)
     all_scanners = Scanner.objects.all()
     participants = EventParticipant.objects.filter(event=event).select_related('volunteer')
     
     if request.method == 'POST':
-        if request.user.is_staff or event.leader == request.user:
+        if request.user.is_staff or event.created_by == request.user:
             if 'add_volunteer' in request.POST:
                 volunteer_id = request.POST.get('volunteer_id')
+                current_participants_count = participants.count()
+                if current_participants_count >= event.max_scanners:
+                    messages.error(request, f'Превышено максимальное количество волонтеров ({event.max_scanners})')
+                    return redirect('event_edit', event_id=event.id)
                 if volunteer_id and not participants.filter(volunteer_id=volunteer_id).exists():
                     EventParticipant.objects.create(event=event, volunteer_id=volunteer_id)
                 return redirect('event_edit', event_id=event.id)
@@ -163,31 +175,22 @@ def event_edit(request, event_id):
                     pass
                 return redirect('event_edit', event_id=event.id)
             if 'save_participants' in request.POST and request.user.is_staff:
-                for p in participants:
-                    is_late = request.POST.get(f'late_{p.id}') == 'on'
-                    late_minutes = int(request.POST.get(f'late_minutes_{p.id}', 0)) if is_late else 0
-                    p.is_late = is_late
-                    p.late_minutes = late_minutes
-                    p.save()
+                pass
             if 'set_duration' in request.POST and request.user.is_staff:
                 duration_hours = float(request.POST.get('duration_hours', 0))
                 event.duration_hours = duration_hours
                 event.save()
                 for p in participants:
-                    late_minutes = p.late_minutes or 0
-                    # Переводим опоздание в часы и вычитаем из общей длительности
-                    late_hours = late_minutes / 60
-                    awarded_hours = max(duration_hours - late_hours, 0)
+                    awarded_hours = duration_hours
                     p.hours_awarded = awarded_hours
                     p.save()
-            
+        clear_scanners_cache()
         return redirect('event_edit', event_id=event.id)
-    
     return render(request, 'core/event_edit.html', {
         'event': event,
         'all_scanners': all_scanners,
         'participants': participants,
-        'is_creator': event.leader == request.user,
+        'is_creator': event.created_by == request.user,
         'is_admin': request.user.is_staff
     })
 
@@ -198,13 +201,17 @@ def volunteer_search(request):
     if q:
         scanners = Scanner.objects.filter(
             Q(first_name__icontains=q) | Q(last_name__icontains=q) | Q(email__icontains=q)
-        ).exclude(id__in=exclude_ids)[:10]
+        ).exclude(id__in=exclude_ids).order_by('last_name', 'first_name')
     else:
         scanners = Scanner.objects.none()
     data = [
         {'id': v.id, 'name': f'{v.first_name} {v.last_name}', 'email': v.email}
         for v in scanners
     ]
+    
+    # Очищаем кеш после добавления нового сканера
+    clear_scanners_cache()
+    
     return JsonResponse({'results': data})
 
 def home(request):
@@ -260,8 +267,8 @@ def export_all_events(request):
         participants_count = EventParticipant.objects.filter(event=event).count()
         ws.cell(row=row_num, column=1, value=event.name)
         ws.cell(row=row_num, column=2, value=event.date)
-        ws.cell(row=row_num, column=3, value=f"{event.leader.first_name} {event.leader.last_name}")
-        ws.cell(row=row_num, column=4, value=event.volunteers_required)
+        ws.cell(row=row_num, column=3, value=f"{event.created_by.first_name} {event.created_by.last_name}")
+        ws.cell(row=row_num, column=4, value=event.max_scanners)
         ws.cell(row=row_num, column=5, value=event.duration_hours)
         ws.cell(row=row_num, column=6, value=participants_count)
         row_num += 1
@@ -480,16 +487,12 @@ def convert_pptx_to_png(pptx_path):
         draw.text((subtitle_x, subtitle_y), subtitle, font=subtitle_font, fill=(255, 255, 255))
         
         # Текст "This certificate is presented to:"
-        presented_text = "This certificate is presented to:"
-        presented_font_size = 36
-        presented_font = normal_font
-        if os.path.exists(arial_path):
-            try:
-                presented_font = ImageFont.truetype(arial_path, presented_font_size)
-            except:
-                pass
-        
-        draw.text((width//2, subtitle_y + 60), presented_text, font=presented_font, fill=(255, 255, 255))
+        pres_text = "This certificate is presented to:"
+        pres_font = ImageFont.truetype(sans_italic, size=18 * scale)
+        pres_w, pres_h = get_text_size(pres_text, pres_font)
+        pres_x = (width - pres_w - 120 * scale)
+        pres_y = subtitle_y + subtitle_font_size - 30
+        draw.text((pres_x, pres_y), pres_text, font=pres_font, fill=(255,255,255,255))
         
         # Имя участника (большим зеленым шрифтом)
         if name:
@@ -511,43 +514,47 @@ def convert_pptx_to_png(pptx_path):
         # Блок благодарности (как на скриншоте)
         lines = [
             "We, the Ticketon company, would like to sincerely express our gratitude and",
-            "appreciation towards your incredible work and support in organizing our events in 2024 and 2025.",
-            "You played important role in organization of each event.",
-            "We hope to see you again in upcoming events!"
+            "appreciation towards your incredible work and support in organizing",
+            "our events in 2024 and 2025. You played important role in organization of",
+            "each event. We hope to see you again in upcoming events!"
         ]
-        line_h = italic_font.getbbox('Ag')[3] - italic_font.getbbox('Ag')[1] + 6
+        main_font = ImageFont.truetype(sans_italic, size=16 * scale)
+        main_width = 600 * scale
+        main_x = width - main_width - 40 * scale
+        main_y = name_y + name_h + 40 * scale
+        line_h = main_font.getbbox('Ag')[3] - main_font.getbbox('Ag')[1] + 8 * scale
         for i, line in enumerate(lines):
-            x = name_x
-            words = line.split(' ')
-            for word in words:
-                if 'Ticketon' in word:
-                    w, h = get_text_size(word, bold_italic_font)
-                    draw.text((x, name_y + i * line_h), word, font=bold_italic_font, fill=(255,255,255,255))
-                    x += w + italic_font.getbbox(' ')[2]
-                else:
-                    w, h = get_text_size(word, italic_font)
-                    draw.text((x, name_y + i * line_h), word, font=italic_font, fill=(255,255,255,255))
-                    x += w + italic_font.getbbox(' ')[2]
-        
+            words = line.split()
+            if len(words) == 1:
+                draw.text((main_x, main_y + i * line_h), line, font=main_font, fill=(255,255,255,255))
+                continue
+            total_w = sum(get_text_size(w, main_font)[0] for w in words)
+            space_w = int((main_width - total_w) / max(1, (len(words) - 1) * 2))
+            x = main_x
+            for j, word in enumerate(words):
+                draw.text((x, main_y + i * line_h), word, font=main_font, fill=(255,255,255,255))
+                w, _ = get_text_size(word, main_font)
+                x += w + space_w
+
         # Рисуем стрелку с остриём только слева, справа — ровно
-        arrow_w, arrow_height = 540, 110
+        arrow_w, arrow_height = 540 * scale, 110 * scale
         arrow = PILImage.new('RGBA', (arrow_w, arrow_height), (0,0,0,0))
         adraw = ImageDraw.Draw(arrow)
         points = [
-            (0, arrow_height//2), (40, 0), (arrow_w, 0), (arrow_w, arrow_height), (40, arrow_height)
+            (0, arrow_height//2), (40 * scale, 0), (arrow_w, 0), (arrow_w, arrow_height), (40 * scale, arrow_height)
         ]
         adraw.polygon(points, fill=(76,175,80,255))
 
-        margin = 18
-        gap = 14
-        gap_hours = 6
+        margin = 18 * scale
+        gap = 14 * scale
+        gap_hours = 6 * scale
         section_w = (arrow_w - 2 * margin - 2 * gap) // 3
         center_y = arrow_height // 2
 
         # Шрифты для стрелки
-        impact_25 = ImageFont.truetype(impact_path, size=25)
-        impact_19_9 = ImageFont.truetype(impact_path, size=20)
-        impact_18 = ImageFont.truetype(impact_path, size=18)
+        impact_25 = ImageFont.truetype(impact_path, size=25 * scale)
+        impact_19_9 = ImageFont.truetype(impact_path, size=int(19.9 * scale))
+        impact_18 = ImageFont.truetype(impact_path, size=18 * scale)
 
         # Левая секция: часы
         hours_text = f"{int(round(hours)):02d}"
@@ -556,46 +563,64 @@ def convert_pptx_to_png(pptx_path):
         hlw, hlh = get_text_size(hlabel, impact_18)
         line_w = section_w * 0.8
         total_h = hh + gap + hlh
-        base_y = center_y - total_h // 2 - 10
+        base_y = center_y - total_h // 2 - 10 * scale
         hours_x = margin + (section_w - hw) // 2
         hours_y = base_y
         adraw.text((hours_x, hours_y), hours_text, font=impact_25, fill=(255,255,255,255))
         line_y = hours_y + hh + gap
         line_x1 = margin + (section_w - line_w) // 2
         line_x2 = line_x1 + line_w
-        adraw.line([(line_x1, line_y), (line_x2, line_y)], fill=(255,255,255,255), width=4)
+        adraw.line([(line_x1, line_y), (line_x2, line_y)], fill=(255,255,255,255), width=4 * scale)
         hlabel_x = margin + (section_w - hlw) // 2
         hlabel_y = line_y + gap_hours
         adraw.text((hlabel_x, hlabel_y), hlabel, font=impact_18, fill=(255,255,255,255))
 
-        # Центральная секция: печать (крупнее, строго по центру секции)
+        # Центральная секция: печать (штамп чуть выше, овальный)
         if os.path.exists(stamp_path):
             stamp = PILImage.open(stamp_path).convert('RGBA')
-            stamp_size = int(arrow_height * 0.82)
-            stamp = stamp.resize((stamp_size, stamp_size), PILImage.LANCZOS)
-            stamp_x = margin + section_w + gap + (section_w - stamp_size)//2
-            stamp_y = center_y - stamp_size//2
+            stamp_w = int(section_w)
+            stamp_h = int(arrow_height * 0.95)
+            stamp = stamp.resize((stamp_w, stamp_h), PILImage.LANCZOS)
+            stamp_x = margin + section_w + gap
+            stamp_y = center_y - stamp_h // 2
             arrow.paste(stamp, (stamp_x, stamp_y), stamp)
 
-        # Правая секция: подпись и director (по центру секции, между ними больше расстояния)
+        # Правая секция: крупный текст, автоуменьшение если не помещается
         sign_text = "Torgunakova V. K."
-        sign_font = impact_19_9
-        sign_w, sign_h = get_text_size(sign_text, sign_font)
         dir_text = "director"
-        dir_font = impact_18
-        dir_w, dir_h = get_text_size(dir_text, dir_font)
-        # Центрируем всю группу по вертикали секции
-        group_h = sign_h + 12 + dir_h
-        group_y = center_y - group_h // 2
-        sign_x = margin + 2*section_w + 2*gap + (section_w - sign_w)//2
-        sign_y = group_y
+        max_width = section_w - 2 * int(10 * scale)  # внутренний отступ
+        base_sign_font_size = int(20.9 * 1.5 * scale)
+        base_dir_font_size = int(19 * 1.5 * scale)
+        min_font_size = int(10 * scale)
+        sign_font_size = base_sign_font_size
+        dir_font_size = base_dir_font_size
+        while True:
+            sign_font = ImageFont.truetype(impact_path, size=sign_font_size)
+            dir_font = ImageFont.truetype(impact_path, size=dir_font_size)
+            sign_w, sign_h = get_text_size(sign_text, sign_font)
+            dir_w, dir_h = get_text_size(dir_text, dir_font)
+            if sign_w <= max_width and dir_w <= max_width:
+                break
+            sign_font_size -= 2
+            dir_font_size -= 2
+            if sign_font_size < min_font_size or dir_font_size < min_font_size:
+                sign_font_size = dir_font_size = min_font_size
+                sign_font = ImageFont.truetype(impact_path, size=sign_font_size)
+                dir_font = ImageFont.truetype(impact_path, size=dir_font_size)
+                sign_w, sign_h = get_text_size(sign_text, sign_font)
+                dir_w, dir_h = get_text_size(dir_text, dir_font)
+                break
+        right_section_x = margin + 2 * section_w + 2 * gap
+        right_section_y = margin
+        sign_x = right_section_x + (section_w - sign_w) // 2
+        sign_y = right_section_y + 10 * scale
+        dir_x = right_section_x + (section_w - dir_w) // 2
+        dir_y = sign_y + sign_h + int(0.25 * sign_h)
         adraw.text((sign_x, sign_y), sign_text, font=sign_font, fill=(0,0,0,255))
-        dir_x = margin + 2*section_w + 2*gap + (section_w - dir_w)//2
-        dir_y = sign_y + sign_h + 12
-        adraw.text((dir_x, dir_y), dir_text, font=dir_font, fill=(0,0,0,255))
+        adraw.text((dir_x, dir_y), dir_text, font=dir_font, fill=(255,255,255,255))
 
         arrow_x = width - arrow_w
-        arrow_y = height - arrow_height - 60
+        arrow_y = height - arrow_height - 60 * scale
         img.paste(arrow, (arrow_x, arrow_y), arrow)
 
         temp_dir = tempfile.mkdtemp()
@@ -759,22 +784,13 @@ def generate_certificate(request, participant_id):
         hours = round(participant.hours_awarded)
         event_name = event.name
         event_date = event.date.strftime("%d.%m.%Y")
-        leader_name = f"{event.leader.first_name} {event.leader.last_name}" if event.leader else None
+        leader_name = f"{event.created_by.first_name} {event.created_by.last_name}" if event.created_by else None
         file_data = create_certificate_pdf(full_name, hours, event_name, event_date, leader_name)
         participant.hours_awarded = 0
         participant.save()
         filename = f"certificate_{scanner.last_name}_{event.name}.pdf"
-        user_agent = request.META.get('HTTP_USER_AGENT', '').lower()
-        is_mobile = any(x in user_agent for x in ['iphone', 'android', 'ipad', 'mobile'])
-        if is_mobile:
-            import io, zipfile
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, 'w') as zipf:
-                zipf.writestr(filename, file_data)
-            zip_buffer.seek(0)
-            response = HttpResponse(zip_buffer.read(), content_type='application/zip')
-            response['Content-Disposition'] = f'attachment; filename="{scanner.last_name}_{event.name}.zip"'
-            return response
+        
+        # Всегда возвращаем PDF напрямую
         response = HttpResponse(file_data, content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
@@ -784,13 +800,13 @@ def generate_certificate(request, participant_id):
 @team_leader_required
 def generate_all_certificates(request, event_id):
     """
-    Генерирует благодарственные письма для всех участников мероприятия
+    Генерирует сертификаты для всех участников мероприятия
     """
     try:
         event = Event.objects.get(id=event_id)
         participants = EventParticipant.objects.filter(event=event)
         
-        # Создаем zip-архив с благодарностями
+        # Создаем zip-архив с сертификатами
         temp_zip = io.BytesIO()
         
         with zipfile.ZipFile(temp_zip, 'w') as zipf:
@@ -803,11 +819,11 @@ def generate_all_certificates(request, event_id):
                 # Подготавливаем данные для сертификата
                 event_name = event.name
                 event_date = event.date.strftime("%d.%m.%Y")
-                leader_name = f"{event.leader.first_name} {event.leader.last_name}" if event.leader else None
+                leader_name = f"{event.created_by.first_name} {event.created_by.last_name}" if event.created_by else None
                 hours = participant.hours_awarded
                 
-                # Создаем сертификат на основе шаблона PPTX
-                temp_pptx_path, temp_dir = get_certificate_from_template(
+                # Создаем PDF сертификат напрямую
+                pdf_data = create_certificate_pdf(
                     name=full_name, 
                     hours=hours,
                     event_name=event_name,
@@ -815,39 +831,13 @@ def generate_all_certificates(request, event_id):
                     leader_name=leader_name
                 )
                 
-                try:
-                    # Конвертируем в PDF
-                    pdf_data = convert_pptx_to_pdf(temp_pptx_path)
-                    
-                    # Файл для архива и его формат
-                    file_data = None
-                    extension = ""
-                    
-                    if pdf_data:
-                        file_data = pdf_data
-                        extension = 'pdf'
-                    else:
-                        # Если конвертация не удалась, используем PPTX
-                        with open(temp_pptx_path, 'rb') as f:
-                            file_data = f.read()
-                        extension = 'pptx'
-                    
-                    # Обнуляем часы сканера при получении благодарственного письма
-                    participant.hours_awarded = 0
-                    participant.save()
-                    
-                    # Добавляем в архив
-                    filename = f"certificate_{scanner.last_name}_{scanner.first_name}.{extension}"
-                    zipf.writestr(filename, file_data)
-                finally:
-                    # Очищаем временные файлы
-                    try:
-                        os.remove(temp_pptx_path)
-                        if os.path.exists(temp_pptx_path.replace('.pptx', '.pdf')):
-                            os.remove(temp_pptx_path.replace('.pptx', '.pdf'))
-                        os.rmdir(temp_dir)
-                    except Exception as e:
-                        print(f"Ошибка при удалении временных файлов: {e}")
+                # Обнуляем часы сканера при получении сертификата
+                participant.hours_awarded = 0
+                participant.save()
+                
+                # Добавляем в архив
+                filename = f"certificate_{scanner.last_name}_{scanner.first_name}.pdf"
+                zipf.writestr(filename, pdf_data)
         
         temp_zip.seek(0)
         
@@ -874,7 +864,7 @@ def generate_scanner_certificate(request, scanner_id):
             return JsonResponse({"error": "Сканер еще не участвовал на мероприятиях"}, status=400)
         total_hours = participations.aggregate(total_hours=Sum('hours_awarded', output_field=FloatField()))['total_hours'] or 0.0
         if total_hours == 0:
-            return JsonResponse({"error": "Сканер уже получил благодарственное письмо и у него нет часов"}, status=400)
+            return JsonResponse({"error": "Сканер уже получил сертификат и у него нет часов"}, status=400)
         date_range = participations.aggregate(first_event=Min('event__date'), last_event=Max('event__date'))
         first_date = date_range['first_event']
         last_date = date_range['last_event']
@@ -891,17 +881,8 @@ def generate_scanner_certificate(request, scanner_id):
             participant.hours_awarded = 0
             participant.save()
         filename = f"certificate_{scanner.last_name}_{scanner.first_name}.pdf"
-        user_agent = request.META.get('HTTP_USER_AGENT', '').lower()
-        is_mobile = any(x in user_agent for x in ['iphone', 'android', 'ipad', 'mobile'])
-        if is_mobile:
-            import io, zipfile
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, 'w') as zipf:
-                zipf.writestr(filename, file_data)
-            zip_buffer.seek(0)
-            response = HttpResponse(zip_buffer.read(), content_type='application/zip')
-            response['Content-Disposition'] = f'attachment; filename="{scanner.last_name}_{scanner.first_name}.zip"'
-            return response
+        
+        # Всегда возвращаем PDF напрямую
         response = HttpResponse(file_data, content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
@@ -913,13 +894,13 @@ def generate_scanner_certificate(request, scanner_id):
 @team_leader_required
 def generate_all_scanner_certificates(request):
     """
-    Генерирует благодарственные письма для всех сканеров
+    Генерирует сертификаты для всех сканеров
     """
     try:
         # Получаем всех сканеров, которые участвовали хотя бы в одном мероприятии
         scanners = Scanner.objects.filter(id__in=EventParticipant.objects.values_list('volunteer', flat=True).distinct())
         
-        # Создаем zip-архив с благодарностями
+        # Создаем zip-архив с сертификатами
         temp_zip = io.BytesIO()
         
         with zipfile.ZipFile(temp_zip, 'w') as zipf:
@@ -932,6 +913,9 @@ def generate_all_scanner_certificates(request):
                 
                 # Получаем суммарные часы
                 total_hours = participations.aggregate(total_hours=Coalesce(Sum('hours_awarded'), 0))['total_hours']
+                
+                if total_hours == 0:
+                    continue
                 
                 # Получаем даты первого и последнего мероприятия
                 date_range = participations.aggregate(
@@ -956,48 +940,22 @@ def generate_all_scanner_certificates(request):
                 # Период участия
                 period_text = f"{first_date.strftime('%d.%m.%Y')} - {last_date.strftime('%d.%m.%Y')}"
                 
-                # Создаем сертификат на основе шаблона PPTX
-                temp_pptx_path, temp_dir = get_certificate_from_template(
+                # Создаем PDF сертификат напрямую
+                pdf_data = create_certificate_pdf(
                     name=full_name,
                     hours=total_hours,
                     period=period_text,
                     events_list=events_list
                 )
                 
-                try:
-                    # Конвертируем в PDF
-                    pdf_data = convert_pptx_to_pdf(temp_pptx_path)
-                    
-                    # Файл для архива и его формат
-                    file_data = None
-                    extension = ""
-                    
-                    if pdf_data:
-                        file_data = pdf_data
-                        extension = 'pdf'
-                    else:
-                        # Если конвертация не удалась, используем PPTX
-                        with open(temp_pptx_path, 'rb') as f:
-                            file_data = f.read()
-                        extension = 'pptx'
-                    
-                    # Обнуляем часы сканера при получении благодарственного письма
-                    for p in participations:
-                        p.hours_awarded = 0
-                        p.save()
-                    
-                    # Добавляем в архив
-                    filename = f"certificate_{scanner.last_name}_{scanner.first_name}.{extension}"
-                    zipf.writestr(filename, file_data)
-                finally:
-                    # Очищаем временные файлы
-                    try:
-                        os.remove(temp_pptx_path)
-                        if os.path.exists(temp_pptx_path.replace('.pptx', '.pdf')):
-                            os.remove(temp_pptx_path.replace('.pptx', '.pdf'))
-                        os.rmdir(temp_dir)
-                    except Exception as e:
-                        print(f"Ошибка при удалении временных файлов: {e}")
+                # Обнуляем часы сканера при получении сертификата
+                for p in participations:
+                    p.hours_awarded = 0
+                    p.save()
+                
+                # Добавляем в архив
+                filename = f"certificate_{scanner.last_name}_{scanner.first_name}.pdf"
+                zipf.writestr(filename, pdf_data)
         
         temp_zip.seek(0)
         
@@ -1015,7 +973,7 @@ def generate_all_scanner_certificates(request):
 @team_leader_required
 def scanner_certificates(request):
     """
-    Страница поиска сканеров для генерации благодарственных писем
+    Страница поиска сканеров для генерации сертификатов
     """
     return render(request, 'core/scanner_certificate.html')
 
@@ -1122,9 +1080,17 @@ def all_scanners_list(request):
     query = request.GET.get('q', '')
     filter_min_hours = request.GET.get('min_hours', '')
     filter_max_hours = request.GET.get('max_hours', '')
+    page_number = request.GET.get('page', '1')
+    
+    # Создаем кеш-ключ на основе параметров запроса
+    cache_key = f'scanners_list_{query}_{filter_min_hours}_{filter_max_hours}_{page_number}'
+    cached_data = cache.get(cache_key)
+    
+    if cached_data:
+        return render(request, 'core/all_scanners.html', cached_data)
     
     # Базовый запрос со всеми сканерами
-    scanners = Scanner.objects.all().order_by('last_name', 'first_name')
+    scanners = Scanner.objects.all()
     
     # Применяем фильтр по имени/email
     if query:
@@ -1134,55 +1100,68 @@ def all_scanners_list(request):
             Q(email__icontains=query)
         )
     
-    # Добавляем информацию о часах для каждого сканера
+    # Используем annotate для расчета суммарных часов вместо Python-циклов
+    scanners = scanners.annotate(
+        total_hours=Coalesce(Sum('eventparticipant__hours_awarded'), 0.0)
+    )
+    
+    # Применяем фильтры по часам на уровне базы данных
+    if filter_min_hours:
+        scanners = scanners.filter(total_hours__gte=float(filter_min_hours))
+    
+    if filter_max_hours:
+        scanners = scanners.filter(total_hours__lte=float(filter_max_hours))
+    
+    # Сортируем по убыванию часов
+    scanners = scanners.order_by('-total_hours', 'last_name', 'first_name')
+    
+    # Пагинация
+    paginator = Paginator(scanners, 20)  # 20 сканеров на страницу
+    page_obj = paginator.get_page(page_number)
+    
+    # Предзагружаем данные о мероприятиях для сканеров на текущей странице
+    scanner_ids = [scanner.id for scanner in page_obj.object_list]
+    
+    # Получаем все участия для сканеров на текущей странице одним запросом
+    participations = EventParticipant.objects.filter(
+        volunteer_id__in=scanner_ids
+    ).select_related('event').order_by('-event__date')
+    
+    # Группируем участия по сканерам
+    participation_by_scanner = {}
+    for p in participations:
+        if p.volunteer_id not in participation_by_scanner:
+            participation_by_scanner[p.volunteer_id] = []
+        
+        participation_by_scanner[p.volunteer_id].append({
+            'id': p.event.id,
+            'name': p.event.name,
+            'date': p.event.date.strftime('%d.%m.%Y'),
+            'hours': p.hours_awarded
+        })
+    
+    # Формируем итоговый список сканеров с их мероприятиями
     scanners_with_hours = []
-    for scanner in scanners:
-        # Получаем суммарные часы для сканера
-        total_hours = EventParticipant.objects.filter(
-            volunteer=scanner
-        ).aggregate(
-            total_hours=Coalesce(Sum('hours_awarded'), 0.0)
-        )['total_hours']
-        
-        # Применяем фильтры по часам
-        if filter_min_hours and float(filter_min_hours) > total_hours:
-            continue
-        
-        if filter_max_hours and float(filter_max_hours) < total_hours:
-            continue
-        
-        # Получаем список мероприятий, в которых участвовал сканер
-        participations = EventParticipant.objects.filter(
-            volunteer=scanner
-        ).select_related('event').order_by('-event__date')
-        
-        events = []
-        for p in participations:
-            events.append({
-                'id': p.event.id,
-                'name': p.event.name,
-                'date': p.event.date.strftime('%d.%m.%Y'),
-                'hours': p.hours_awarded
-            })
-        
+    for scanner in page_obj.object_list:
         scanners_with_hours.append({
             'id': scanner.id,
             'first_name': scanner.first_name,
             'last_name': scanner.last_name,
             'email': scanner.email,
-            'total_hours': total_hours,
-            'events': events
+            'total_hours': scanner.total_hours,
+            'events': participation_by_scanner.get(scanner.id, [])
         })
-    
-    # Сортируем по убыванию часов
-    scanners_with_hours = sorted(scanners_with_hours, key=lambda x: x['total_hours'], reverse=True)
     
     context = {
         'scanners': scanners_with_hours,
         'query': query,
         'min_hours': filter_min_hours,
-        'max_hours': filter_max_hours
+        'max_hours': filter_max_hours,
+        'page_obj': page_obj
     }
+    
+    # Кешируем результат на 5 минут
+    cache.set(cache_key, context, 300)
     
     return render(request, 'core/all_scanners.html', context)
 
@@ -1200,22 +1179,24 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
     sans_italic = os.path.join(base_dir, 'static', 'fonts', 'OpenSans-Italic.ttf')
     sans_bold_italic = os.path.join(base_dir, 'static', 'fonts', 'OpenSans-BoldItalic.ttf')
 
-    width, height = 1123, 794
+    # Увеличиваем разрешение для максимального качества
+    scale = 2
+    width, height = 1123 * scale, 794 * scale
     bg = PILImage.open(bg_path).convert('RGBA').resize((width, height))
     overlay = PILImage.open(overlay_path).convert('RGBA').resize((width, height))
     img = PILImage.alpha_composite(bg, overlay)
     draw = ImageDraw.Draw(img)
 
-    # Логотип в левый нижний угол (logo_scale = 0.52)
+    # Логотип в левый нижний угол (logo_scale = 0.9)
     logo = PILImage.open(logo_path).convert('RGBA')
     logo_w, logo_h = logo.size
-    logo_scale = 0.52
+    logo_scale = 0.9
     logo = logo.resize((int(logo_w * logo_scale), int(logo_h * logo_scale)), PILImage.LANCZOS)
-    img.paste(logo, (40, height - logo.height - 40), logo)
+    img.paste(logo, (40 * scale, height - logo.height - 40 * scale), logo)
 
     # Шрифты
     impact = ImageFont.truetype(impact_path, size=98)
-    impact_name = ImageFont.truetype(impact_path, size=64)
+    impact_name = ImageFont.truetype(impact_path, size=128)
     sans_bold_italic_f = ImageFont.truetype(sans_bold_italic, size=24)
     sans_italic_f = ImageFont.truetype(sans_italic, size=18)
     sans_italic_f_small = ImageFont.truetype(sans_italic, size=16)
@@ -1227,85 +1208,79 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
 
     # CERTIFICAT
     cert_text = "CERTIFICAT"
-    cert_w, cert_h = get_text_size(cert_text, impact)
-    cert_x = width - cert_w - 80
-    cert_y = 70
-    draw.text((cert_x, cert_y), cert_text, font=impact, fill=(255,255,255,255))
+    impact_cert = ImageFont.truetype(impact_path, size=int(98.3 * scale))
+    cert_w, cert_h = get_text_size(cert_text, impact_cert)
+    cert_x = (width - cert_w - 80 * scale)
+    cert_y = 70 * scale
+    draw.text((cert_x, cert_y), cert_text, font=impact_cert, fill=(255,255,255,255))
 
     # OF APPRECIATION
     app_text = "OF APPRECIATION"
-    app_w, app_h = get_text_size(app_text, sans_bold_italic_f)
-    app_x = width - app_w - 85
-    app_y = cert_y + cert_h + 40
-    draw.text((app_x, app_y), app_text, font=sans_bold_italic_f, fill=(255,255,255,255))
+    app_font = ImageFont.truetype(sans_bold_italic, size=24 * scale)
+    app_w, app_h = get_text_size(app_text, app_font)
+    app_x = (width - app_w - 85 * scale)
+    app_y = cert_y + cert_h + 40 * scale
+    draw.text((app_x, app_y), app_text, font=app_font, fill=(255,255,255,255))
 
     # This certificate is presented to:
     pres_text = "This certificate is presented to:"
-    pres_w, pres_h = get_text_size(pres_text, sans_italic_f)
-    pres_x = width - pres_w - 120
-    pres_y = app_y + app_h + 40
-    draw.text((pres_x, pres_y), pres_text, font=sans_italic_f, fill=(255,255,255,255))
+    pres_font = ImageFont.truetype(sans_italic, size=18 * scale)
+    pres_w, pres_h = get_text_size(pres_text, pres_font)
+    pres_x = (width - pres_w - 120 * scale)
+    pres_y = app_y + app_h + 40 * scale
+    draw.text((pres_x, pres_y), pres_text, font=pres_font, fill=(255,255,255,255))
 
     # NAME
     name_text = name
     name_w, name_h = get_text_size(name_text, impact_name)
-    name_x = width - name_w - 120
-    name_y = pres_y + pres_h + 10
+    name_x = (width - name_w - 120 * scale)
+    name_y = pres_y + pres_h + 10 * scale
     draw.text((name_x, name_y), name_text, font=impact_name, fill=(76,175,80,255))
 
     # Блок благодарности (как на скриншоте)
-    thanks_text = (
-        "We, the Ticketon company, would like to sincerely express our gratitude and appreciation "
-        "towards your incredible work and support in organizing our events in 2024 and 2025. "
-        "You played important role in organization of each event. We hope to see you again in upcoming_events!"
-    )
-    italic_font = ImageFont.truetype(sans_italic, size=22)
-    bold_italic_font = ImageFont.truetype(sans_bold_italic, size=22)
-    underline_font = italic_font
-    start_x = name_x
-    max_width = 600
-    start_y = name_y + name_h + 40
-    # Разбиваем на слова, чтобы upcoming_events! не переносился
-    words = thanks_text.split(' ')
-    x, y = start_x, start_y
-    line_h = italic_font.getbbox('Ag')[3] - italic_font.getbbox('Ag')[1] + 6
-    def draw_word(word, font, color, underline=False):
-        nonlocal x, y
-        display_word = word.replace('upcoming_events!', 'upcoming events!')
-        w, h = get_text_size(display_word, font)
-        if x + w > start_x + max_width:
-            x = start_x
-            y += line_h
-        draw.text((x, y), display_word, font=font, fill=color)
-        if underline:
-            uy = y + h + 2
-            draw.line([(x, uy), (x + w, uy)], fill=color, width=2)
-        x += w + italic_font.getbbox(' ')[2]
-    for word in words:
-        if 'Ticketon' in word:
-            draw_word(word, bold_italic_font, (255,255,255,255))
-        else:
-            draw_word(word, italic_font, (255,255,255,255))
-    
+    lines = [
+        "We, the Ticketon company, would like to sincerely express our gratitude and",
+        "appreciation towards your incredible work and support in organizing",
+        "our events in 2024 and 2025. You played important role in organization of",
+        "each event. We hope to see you again in upcoming events!"
+    ]
+    main_font = ImageFont.truetype(sans_italic, size=16 * scale)
+    main_width = 600 * scale
+    main_x = width - main_width - 40 * scale
+    main_y = name_y + name_h + 40 * scale
+    line_h = main_font.getbbox('Ag')[3] - main_font.getbbox('Ag')[1] + 8 * scale
+    for i, line in enumerate(lines):
+        words = line.split()
+        if len(words) == 1:
+            draw.text((main_x, main_y + i * line_h), line, font=main_font, fill=(255,255,255,255))
+            continue
+        total_w = sum(get_text_size(w, main_font)[0] for w in words)
+        space_w = int((main_width - total_w) / max(1, (len(words) - 1) * 2))
+        x = main_x
+        for j, word in enumerate(words):
+            draw.text((x, main_y + i * line_h), word, font=main_font, fill=(255,255,255,255))
+            w, _ = get_text_size(word, main_font)
+            x += w + space_w
+
     # Рисуем стрелку с остриём только слева, справа — ровно
-    arrow_w, arrow_height = 540, 110
+    arrow_w, arrow_height = 540 * scale, 110 * scale
     arrow = PILImage.new('RGBA', (arrow_w, arrow_height), (0,0,0,0))
     adraw = ImageDraw.Draw(arrow)
     points = [
-        (0, arrow_height//2), (40, 0), (arrow_w, 0), (arrow_w, arrow_height), (40, arrow_height)
+        (0, arrow_height//2), (40 * scale, 0), (arrow_w, 0), (arrow_w, arrow_height), (40 * scale, arrow_height)
     ]
     adraw.polygon(points, fill=(76,175,80,255))
 
-    margin = 18
-    gap = 14
-    gap_hours = 6
+    margin = 18 * scale
+    gap = 14 * scale
+    gap_hours = 6 * scale
     section_w = (arrow_w - 2 * margin - 2 * gap) // 3
     center_y = arrow_height // 2
 
     # Шрифты для стрелки
-    impact_25 = ImageFont.truetype(impact_path, size=25)
-    impact_19_9 = ImageFont.truetype(impact_path, size=20)
-    impact_18 = ImageFont.truetype(impact_path, size=18)
+    impact_25 = ImageFont.truetype(impact_path, size=25 * scale)
+    impact_19_9 = ImageFont.truetype(impact_path, size=int(19.9 * scale))
+    impact_18 = ImageFont.truetype(impact_path, size=18 * scale)
 
     # Левая секция: часы
     hours_text = f"{int(round(hours)):02d}"
@@ -1314,46 +1289,64 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
     hlw, hlh = get_text_size(hlabel, impact_18)
     line_w = section_w * 0.8
     total_h = hh + gap + hlh
-    base_y = center_y - total_h // 2 - 10
+    base_y = center_y - total_h // 2 - 10 * scale
     hours_x = margin + (section_w - hw) // 2
     hours_y = base_y
     adraw.text((hours_x, hours_y), hours_text, font=impact_25, fill=(255,255,255,255))
     line_y = hours_y + hh + gap
     line_x1 = margin + (section_w - line_w) // 2
     line_x2 = line_x1 + line_w
-    adraw.line([(line_x1, line_y), (line_x2, line_y)], fill=(255,255,255,255), width=4)
+    adraw.line([(line_x1, line_y), (line_x2, line_y)], fill=(255,255,255,255), width=4 * scale)
     hlabel_x = margin + (section_w - hlw) // 2
     hlabel_y = line_y + gap_hours
     adraw.text((hlabel_x, hlabel_y), hlabel, font=impact_18, fill=(255,255,255,255))
 
-    # Центральная секция: печать (крупнее, строго по центру секции)
+    # Центральная секция: печать (штамп чуть выше, овальный)
     if os.path.exists(stamp_path):
         stamp = PILImage.open(stamp_path).convert('RGBA')
-        stamp_size = int(arrow_height * 0.82)
-        stamp = stamp.resize((stamp_size, stamp_size), PILImage.LANCZOS)
-        stamp_x = margin + section_w + gap + (section_w - stamp_size)//2
-        stamp_y = center_y - stamp_size//2
+        stamp_w = int(section_w)
+        stamp_h = int(arrow_height * 0.95)
+        stamp = stamp.resize((stamp_w, stamp_h), PILImage.LANCZOS)
+        stamp_x = margin + section_w + gap
+        stamp_y = center_y - stamp_h // 2
         arrow.paste(stamp, (stamp_x, stamp_y), stamp)
 
-    # Правая секция: подпись и director (по центру секции, между ними больше расстояния)
+    # Правая секция: крупный текст, автоуменьшение если не помещается
     sign_text = "Torgunakova V. K."
-    sign_font = impact_19_9
-    sign_w, sign_h = get_text_size(sign_text, sign_font)
     dir_text = "director"
-    dir_font = impact_18
-    dir_w, dir_h = get_text_size(dir_text, dir_font)
-    # Центрируем всю группу по вертикали секции
-    group_h = sign_h + 12 + dir_h
-    group_y = center_y - group_h // 2
-    sign_x = margin + 2*section_w + 2*gap + (section_w - sign_w)//2
-    sign_y = group_y
+    max_width = section_w - 2 * int(10 * scale)  # внутренний отступ
+    base_sign_font_size = int(20.9 * 1.5 * scale)
+    base_dir_font_size = int(19 * 1.5 * scale)
+    min_font_size = int(10 * scale)
+    sign_font_size = base_sign_font_size
+    dir_font_size = base_dir_font_size
+    while True:
+        sign_font = ImageFont.truetype(impact_path, size=sign_font_size)
+        dir_font = ImageFont.truetype(impact_path, size=dir_font_size)
+        sign_w, sign_h = get_text_size(sign_text, sign_font)
+        dir_w, dir_h = get_text_size(dir_text, dir_font)
+        if sign_w <= max_width and dir_w <= max_width:
+            break
+        sign_font_size -= 2
+        dir_font_size -= 2
+        if sign_font_size < min_font_size or dir_font_size < min_font_size:
+            sign_font_size = dir_font_size = min_font_size
+            sign_font = ImageFont.truetype(impact_path, size=sign_font_size)
+            dir_font = ImageFont.truetype(impact_path, size=dir_font_size)
+            sign_w, sign_h = get_text_size(sign_text, sign_font)
+            dir_w, dir_h = get_text_size(dir_text, dir_font)
+            break
+    right_section_x = margin + 2 * section_w + 2 * gap
+    right_section_y = margin
+    sign_x = right_section_x + (section_w - sign_w) // 2
+    sign_y = right_section_y + 10 * scale
+    dir_x = right_section_x + (section_w - dir_w) // 2
+    dir_y = sign_y + sign_h + int(0.25 * sign_h)
     adraw.text((sign_x, sign_y), sign_text, font=sign_font, fill=(0,0,0,255))
-    dir_x = margin + 2*section_w + 2*gap + (section_w - dir_w)//2
-    dir_y = sign_y + sign_h + 12
-    adraw.text((dir_x, dir_y), dir_text, font=dir_font, fill=(0,0,0,255))
+    adraw.text((dir_x, dir_y), dir_text, font=dir_font, fill=(255,255,255,255))
 
     arrow_x = width - arrow_w
-    arrow_y = height - arrow_height - 60
+    arrow_y = height - arrow_height - 60 * scale
     img.paste(arrow, (arrow_x, arrow_y), arrow)
 
     temp_dir = tempfile.mkdtemp()
@@ -1361,8 +1354,8 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
     img.convert('RGB').save(temp_img_path, 'PNG')
 
     temp_pdf_path = os.path.join(temp_dir, 'certificate.pdf')
-    c = canvas.Canvas(temp_pdf_path, pagesize=(width, height))
-    c.drawImage(temp_img_path, 0, 0, width=width, height=height)
+    c = canvas.Canvas(temp_pdf_path, pagesize=(1123, 794))
+    c.drawImage(temp_img_path, 0, 0, width=1123, height=794)
     c.save()
 
     with open(temp_pdf_path, 'rb') as f:
@@ -1450,3 +1443,9 @@ def event_delete(request, event_id):
         messages.success(request, 'Мероприятие успешно удалено.')
         return redirect('events')
     return render(request, 'core/event_confirm_delete.html', {'event': event})
+
+# Функция для очистки кеша связанного со сканерами
+def clear_scanners_cache():
+    """Очищает все кеши, связанные со сканерами"""
+    # Очищаем кеш по префиксу
+    cache.clear()

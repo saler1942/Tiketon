@@ -7,10 +7,11 @@
     <h1>Мероприятия</h1>
     <div class="flex gap-2" style="flex-wrap: wrap;">
         <a href="{% url 'event_create' %}" class="btn btn-primary">Добавить мероприятие</a>
+        <a href="{% url 'all_scanners_list' %}" class="btn btn-secondary">Список сканеров</a>
         {% if user.is_staff %}
         <a href="{% url 'admin:index' %}" class="btn btn-secondary">Админ-панель</a>
         {% endif %}
-        <a href="{% url 'scanner_certificates' %}" class="btn btn-success">Благодарственные письма</a>
+        <a href="{% url 'scanner_certificates' %}" class="btn btn-success">Сертификаты</a>
         <!-- <a href="{% url 'export_all_events' %}" class="btn btn-secondary">Экспорт в Excel</a> -->
     </div>
 </div>
@@ -46,8 +47,8 @@
                 <h2 class="mb-1" style="word-break: break-word;">{{ event.name }}</h2>
                 <div class="text-sm" style="color: #666;">
                     <div style="margin-bottom: 0.3rem;">Дата: {{ event.date }}</div>
-                    <div style="margin-bottom: 0.3rem;">Тимлидер: {{ event.leader.first_name }} {{ event.leader.last_name }}</div>
-                    <div>Требуется сканеров: {{ event.volunteers_required }}</div>
+                    <div style="margin-bottom: 0.3rem;">Тимлидер: {{ event.created_by.first_name }} {{ event.created_by.last_name }}</div>
+                    <div>Требуется сканеров: {{ event.max_scanners }}</div>
                 </div>
             </div>
             <a href="{% url 'event_edit' event.id %}" class="btn btn-secondary" style="align-self: flex-start;">Управление</a>

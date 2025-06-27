@@ -3,40 +3,80 @@
 {% block title %}Создание мероприятия | Freedom Ticketon | TEAM SYRYM{% endblock %}
 
 {% block content %}
-<div class="card" style="max-width: 600px; margin: 0 auto;">
-    <h1>Создание нового мероприятия</h1>
-    
-    <form method="post">
-        {% csrf_token %}
-        
-        <div class="form-group">
-            <label for="name">Название мероприятия</label>
-            <input id="name" name="name" type="text" class="form-control" placeholder="Название" required>
-        </div>
-        
-        <div class="form-group">
-            <label for="date">Дата проведения (если однодневное)</label>
-            <input id="date" name="date" type="date" class="form-control">
-        </div>
-        
-        <div class="form-group">
-            <label>Период (если многодневное):</label>
-            <div style="display: flex; gap: 1rem;">
-                <input id="start_date" name="start_date" type="date" class="form-control" placeholder="Начало">
-                <input id="end_date" name="end_date" type="date" class="form-control" placeholder="Окончание">
-            </div>
-            <small class="form-text text-muted">Заполните оба поля, если мероприятие длится несколько дней</small>
-        </div>
-        
-        <div class="form-group">
-            <label for="volunteers_required">Необходимое количество сканеров</label>
-            <input id="volunteers_required" name="volunteers_required" type="number" min="1" class="form-control" placeholder="Количество" required>
-        </div>
-        
-        <div class="flex justify-between">
-            <a href="{% url 'events' %}" class="btn btn-secondary">Отмена</a>
-            <button type="submit" class="btn btn-primary">Создать мероприятие</button>
-        </div>
-    </form>
+<div class="flex justify-between items-center mb-3">
+    <h1>Создание мероприятия</h1>
+    <a href="{% url 'events' %}" class="btn btn-secondary">Назад</a>
 </div>
+
+<form method="post" class="card" style="max-width: 600px;">
+    {% csrf_token %}
+    <div class="form-group">
+        <label for="name">Название мероприятия</label>
+        <input type="text" id="name" name="name" class="form-control" required>
+    </div>
+    <div class="form-group">
+        <label>Тип события</label>
+        <div class="radio-group">
+            <label class="radio">
+                <input type="radio" name="event_type" value="single" checked onchange="toggleDateFields()">
+                <span>Однодневное событие</span>
+            </label>
+            <label class="radio">
+                <input type="radio" name="event_type" value="period" onchange="toggleDateFields()">
+                <span>Период</span>
+            </label>
+        </div>
+    </div>
+    <div id="single_date_field" class="form-group">
+        <label for="date">Дата</label>
+        <input type="date" id="date" name="date" class="form-control" required>
+    </div>
+    <div id="period_date_fields" style="display: none;">
+        <div class="form-group">
+            <label for="start_date">Дата начала</label>
+            <input type="date" id="start_date" name="start_date" class="form-control">
+        </div>
+        <div class="form-group">
+            <label for="end_date">Дата окончания</label>
+            <input type="date" id="end_date" name="end_date" class="form-control">
+        </div>
+    </div>
+    <div class="form-group">
+        <label for="location">Место проведения</label>
+        <input type="text" id="location" name="location" class="form-control" value="Астана">
+    </div>
+    <div class="form-group">
+        <label for="description">Описание</label>
+        <textarea id="description" name="description" class="form-control" rows="3"></textarea>
+    </div>
+    <div class="form-group">
+        <label for="max_scanners">Максимальное количество сканеров</label>
+        <input type="number" id="max_scanners" name="max_scanners" class="form-control" min="1" value="10" required>
+    </div>
+    <button type="submit" class="btn btn-primary">Создать мероприятие</button>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    function toggleDateFields() {
+        const eventType = document.querySelector('input[name="event_type"]:checked').value;
+        const singleDateField = document.getElementById('single_date_field');
+        const periodDateFields = document.getElementById('period_date_fields');
+        
+        if (eventType === 'single') {
+            singleDateField.style.display = 'block';
+            periodDateFields.style.display = 'none';
+            document.getElementById('date').required = true;
+            document.getElementById('start_date').required = false;
+            document.getElementById('end_date').required = false;
+        } else {
+            singleDateField.style.display = 'none';
+            periodDateFields.style.display = 'block';
+            document.getElementById('date').required = false;
+            document.getElementById('start_date').required = true;
+            document.getElementById('end_date').required = true;
+        }
+    }
+</script>
 {% endblock %} 

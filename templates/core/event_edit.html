@@ -7,7 +7,7 @@
 <div class="flex justify-between items-center mb-3">
     <h1>{{ event.name }}</h1>
     <div class="flex gap-2">
-        <a href="{% url 'generate_all_certificates' event.id %}" class="btn btn-success">Благодарности для всех</a>
+        <a href="{% url 'generate_all_certificates' event.id %}" class="btn btn-success">Сертификаты для всех</a>
         <a href="{% url 'events' %}" class="btn btn-secondary">← Назад к мероприятиям</a>
         {% if is_admin %}
         <a href="{% url 'event_delete' event.id %}" class="btn btn-danger" onclick="return confirm('Вы уверены, что хотите удалить это мероприятие?');">Удалить мероприятие</a>
@@ -15,29 +15,33 @@
     </div>
 </div>
 
-<div class="card mb-3">
-    <h2>Информация о мероприятии</h2>
-    <div class="flex mb-2">
-        <div style="flex: 1;">
-            <strong>Дата:</strong> {{ event.date }}
-        </div>
-        <div style="flex: 1;">
-            <strong>Требуется сканеров:</strong> {{ event.volunteers_required }}
-        </div>
+<div class="event-details mb-3">
+    <h2>{{ event.name }}</h2>
+    <div class="text-sm" style="color: #666;">
+        <div>Дата: {{ event.date }}</div>
+        <div>Тимлидер: {{ event.created_by.first_name }} {{ event.created_by.last_name }}</div>
+        <div>Максимум сканеров: {{ event.max_scanners }}</div>
+        <div>Текущее количество: {{ participants.count }}</div>
     </div>
+</div>
+
+<!-- Уведомление о достижении лимита сканеров -->
+<div id="limit-notification" style="display: none; background-color: #f8d7da; color: #721c24; padding: 10px 15px; border-radius: 4px; margin-bottom: 15px; border: 1px solid #f5c6cb;">
+    <strong>Внимание!</strong> Достигнуто максимальное количество сканеров ({{ event.max_scanners }}). Нельзя добавить больше.
 </div>
 
 <div class="card mb-3">
     <h2 class="mb-2">Добавление сканеров</h2>
-    <form id="add-volunteer-form" method="post" class="search-container mb-2">
-        {% csrf_token %}
-        <div class="flex gap-2">
-            <input id="volunteer-search" type="text" class="form-control" placeholder="Поиск сканера по имени или email" autocomplete="off" style="flex:1">
-            <input type="hidden" name="volunteer_id" id="volunteer-id">
-            <button name="add_volunteer" class="btn btn-primary" disabled id="add-volunteer-btn">Добавить сканера</button>
-        </div>
-        <div id="volunteer-results" class="search-results" style="display:none;"></div>
-    </form>
+    <div id="search-wrapper">
+        <form id="add-volunteer-form" method="post">
+            {% csrf_token %}
+            <div class="flex gap-2">
+                <input id="volunteer-search" type="text" class="form-control" placeholder="Поиск сканера по имени или email" autocomplete="off" style="flex:1">
+                <input type="hidden" name="volunteer_id" id="volunteer-id">
+                <button name="add_volunteer" class="btn btn-primary" disabled id="add-volunteer-btn">Добавить сканера</button>
+            </div>
+        </form>
+    </div>
 </div>
 
 <div class="card mb-3">
@@ -71,7 +75,7 @@
                     </td>
                     {% endif %}
                     <td>
-                        <a href="{% url 'generate_certificate' p.id %}" class="btn btn-success" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;">Благодарность</a>
+                        <a href="{% url 'generate_certificate' p.id %}" class="btn btn-success" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;">Сертификат</a>
                         {% if is_admin %}
                         <form method="post" style="display:inline;" onsubmit="return confirm('Удалить сканера из мероприятия?');">
                             {% csrf_token %}
@@ -114,75 +118,156 @@
 {% endif %}
 
 <div class="card mt-3">
-    <h2 class="mb-2">Благодарственные письма</h2>
+    <h2 class="mb-2">Сертификаты</h2>
     <p class="mb-2" style="color: #666;">
-        Вы можете сгенерировать благодарственные письма для участников мероприятия.
-        Письма создаются на основе шаблона PowerPoint с автоматическим заполнением данных участника.
+        Вы можете сгенерировать сертификаты для участников мероприятия.
+        Сертификаты создаются на основе шаблона с автоматическим заполнением данных участника.
     </p>
     <div>
         <a href="{% url 'generate_all_certificates' event.id %}" class="btn btn-success">Сгенерировать для всех участников</a>
-        <a href="{% url 'scanner_certificates' %}" class="btn btn-primary">Персональные благодарности</a>
+        <a href="{% url 'scanner_certificates' %}" class="btn btn-primary">Персональные сертификаты</a>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script>
-const searchInput = document.getElementById('volunteer-search');
-const resultsBox = document.getElementById('volunteer-results');
-const volunteerIdInput = document.getElementById('volunteer-id');
-const addButton = document.getElementById('add-volunteer-btn');
-let timer;
+<!-- Выпадающий список поиска -->
+<div id="volunteer-results" style="display:none; position: absolute; z-index: 10000; background: white; border: 1px solid #ddd; border-radius: 4px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); max-height: 300px; overflow-y: auto;"></div>
 
-searchInput.addEventListener('input', function() {
-  clearTimeout(timer);
-  const q = this.value.trim();
-  if (q.length < 2) { 
-    resultsBox.style.display = 'none'; 
-    addButton.disabled = true;
-    return; 
-  }
-  
-  timer = setTimeout(() => {
-    fetch(`/api/scanner-search/?q=${encodeURIComponent(q)}&event_id={{ event.id }}`)
-      .then(r => r.json())
-      .then(data => {
-        resultsBox.innerHTML = '';
-        if (data.results.length === 0) { 
-          resultsBox.style.display = 'none';
-          addButton.disabled = true;
-          return; 
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('volunteer-search');
+    const resultsBox = document.getElementById('volunteer-results');
+    const volunteerIdInput = document.getElementById('volunteer-id');
+    const addButton = document.getElementById('add-volunteer-btn');
+    const limitNotification = document.getElementById('limit-notification');
+    let timer;
+
+    // Проверяем, достигнут ли лимит сканеров
+    const currentParticipantsCount = {{ participants|length }};
+    const maxParticipantsCount = {{ event.max_scanners }};
+    
+    if (currentParticipantsCount >= maxParticipantsCount) {
+        limitNotification.style.display = 'block';
+        searchInput.disabled = true;
+        addButton.disabled = true;
+    }
+
+    // Функция для позиционирования выпадающего списка
+    function updatePosition() {
+        const rect = searchInput.getBoundingClientRect();
+        resultsBox.style.width = rect.width + 'px';
+        resultsBox.style.left = rect.left + window.pageXOffset + 'px';
+        resultsBox.style.top = rect.bottom + window.pageYOffset + 'px';
+    }
+
+    // Перемещаем список в body для абсолютного позиционирования
+    document.body.appendChild(resultsBox);
+
+    searchInput.addEventListener('input', function() {
+        clearTimeout(timer);
+        const q = this.value.trim();
+        if (q.length < 2) { 
+            resultsBox.style.display = 'none'; 
+            addButton.disabled = true;
+            return; 
         }
         
-        data.results.forEach(v => {
-          const div = document.createElement('div');
-          div.textContent = v.name + ' (' + v.email + ')';
-          div.className = 'search-result-item';
-          div.onclick = () => {
-            searchInput.value = v.name + ' (' + v.email + ')';
-            volunteerIdInput.value = v.id;
-            resultsBox.style.display = 'none';
-            addButton.disabled = false;
-          };
-          resultsBox.appendChild(div);
-        });
+        timer = setTimeout(() => {
+            fetch(`/api/scanner-search/?q=${encodeURIComponent(q)}&event_id={{ event.id }}`)
+                .then(r => r.json())
+                .then(data => {
+                    resultsBox.innerHTML = '';
+                    if (data.results.length === 0) { 
+                        const div = document.createElement('div');
+                        div.textContent = 'Не найдено сканеров';
+                        div.style.padding = '10px';
+                        div.style.color = '#666';
+                        resultsBox.appendChild(div);
+                    } else {
+                        data.results.forEach(v => {
+                            const div = document.createElement('div');
+                            div.textContent = v.name + ' (' + v.email + ')';
+                            div.style.padding = '10px';
+                            div.style.borderBottom = '1px solid #eee';
+                            div.style.cursor = 'pointer';
+                            
+                            div.addEventListener('mouseover', function() {
+                                this.style.backgroundColor = '#f0f0f0';
+                            });
+                            div.addEventListener('mouseout', function() {
+                                this.style.backgroundColor = '';
+                            });
+                            
+                            div.addEventListener('click', function() {
+                                searchInput.value = v.name + ' (' + v.email + ')';
+                                volunteerIdInput.value = v.id;
+                                resultsBox.style.display = 'none';
+                                addButton.disabled = false;
+                            });
+                            
+                            resultsBox.appendChild(div);
+                        });
+                    }
+                    
+                    // Обновляем позицию и показываем список
+                    updatePosition();
+                    resultsBox.style.display = 'block';
+                    addButton.disabled = true;
+                });
+        }, 200);
+    });
+
+    // Обновляем позицию при прокрутке и изменении размера окна
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition);
+    
+    // Фокус на поле ввода
+    searchInput.addEventListener('focus', function() {
+        if (resultsBox.style.display === 'block') {
+            updatePosition();
+        }
+    });
+
+    document.getElementById('add-volunteer-form').addEventListener('submit', function(e) {
+        if (!volunteerIdInput.value) {
+            e.preventDefault();
+            searchInput.focus();
+            return;
+        }
         
-        resultsBox.style.display = 'block';
-      });
-  }, 200);
-});
+        // Проверяем, не превышен ли лимит сканеров
+        if (currentParticipantsCount >= maxParticipantsCount) {
+            e.preventDefault();
+            limitNotification.style.display = 'block';
+            
+            // Прокручиваем к уведомлению
+            limitNotification.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            // Выделяем уведомление на короткое время
+            limitNotification.style.transition = 'background-color 0.3s';
+            limitNotification.style.backgroundColor = '#dc3545';
+            setTimeout(() => {
+                limitNotification.style.backgroundColor = '#f8d7da';
+            }, 500);
+        }
+    });
 
-document.getElementById('add-volunteer-form').addEventListener('submit', function(e) {
-  if (!volunteerIdInput.value) {
-    e.preventDefault();
-    searchInput.focus();
-  }
-});
-
-document.addEventListener('click', function(e) {
-  if (!resultsBox.contains(e.target) && e.target !== searchInput) {
-    resultsBox.style.display = 'none';
-  }
+    document.addEventListener('click', function(e) {
+        if (!resultsBox.contains(e.target) && e.target !== searchInput) {
+            resultsBox.style.display = 'none';
+        }
+    });
+    
+    // Показываем сообщение об ошибке, если оно есть в URL
+    {% if messages %}
+        {% for message in messages %}
+            {% if message.tags == 'error' %}
+                limitNotification.textContent = "{{ message }}";
+                limitNotification.style.display = 'block';
+            {% endif %}
+        {% endfor %}
+    {% endif %}
 });
 </script>
 {% endblock %} 

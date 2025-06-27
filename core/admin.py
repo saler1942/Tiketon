@@ -57,15 +57,19 @@ class ScannerAdmin(admin.ModelAdmin):
 
 # Класс для админки мероприятий с фильтрацией и поиском
 class EventAdmin(admin.ModelAdmin):
-    list_display = ('name', 'date', 'start_date', 'end_date', 'volunteers_required', 'leader', 'duration_hours')
-    list_filter = ('date', 'start_date', 'end_date', 'leader')
+    list_display = [
+        'id', 'name', 'start_date', 'end_date', 'location'
+    ]
+    list_filter = ['start_date', 'end_date', 'location']
     search_fields = ('name', 'leader__username', 'leader__first_name', 'leader__last_name')
     ordering = ('-date',)
 
 # Класс для админки участников с фильтрацией и поиском
 class EventParticipantAdmin(admin.ModelAdmin):
-    list_display = ('event', 'volunteer', 'is_late', 'late_minutes', 'hours_awarded')
-    list_filter = ('event', 'is_late')
+    list_display = [
+        'id', 'event', 'volunteer'
+    ]
+    list_filter = ['event']
     search_fields = ('event__name', 'volunteer__first_name', 'volunteer__last_name', 'volunteer__email')
     ordering = ('event', 'volunteer')
 

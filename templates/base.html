@@ -26,25 +26,11 @@
             display: flex;
             align-items: center;
         }
-        .mobile-menu-toggle {
-            display: none;
-            background: none;
-            border: none;
-            color: white;
-            font-size: 1.5rem;
-            cursor: pointer;
-            padding: 0.5rem;
-        }
         @media (max-width: 768px) {
-            .mobile-menu-toggle {
-                display: block;
-            }
             .navbar-nav {
-                display: none;
                 width: 100%;
-            }
-            .navbar-nav.active {
                 display: flex;
+                flex-wrap: wrap;
             }
             .navbar .container {
                 flex-wrap: wrap;
@@ -66,21 +52,9 @@
                     <img src="{% static 'img/freedom_logo.jpg' %}" alt="Freedom Logo" class="logo">
                     <span class="brand-text">Freedom Ticketon | TEAM SYRYM</span>
                 </a>
-                {% if user.is_authenticated %}
-                <button class="mobile-menu-toggle" id="menuToggle">☰</button>
-                {% endif %}
             </div>
             {% if user.is_authenticated %}
             <ul class="navbar-nav" id="mobileMenu">
-                <!-- <li class="nav-item">
-                    <a href="{% url 'events' %}" class="nav-link">Мероприятия</a>
-                </li> -->
-                <li class="nav-item">
-                    <a href="{% url 'all_scanners' %}" class="nav-link">Список сканеров</a>
-                </li>
-                <li class="nav-item">
-                    <a href="{% url 'scanner_certificates' %}" class="nav-link">Благодарственные письма</a>
-                </li>
                 <li class="nav-item">
                     <span class="nav-link">{{ user.first_name }} {{ user.last_name }}</span>
                 </li>
@@ -94,34 +68,5 @@
     </div>
 
     {% block scripts %}{% endblock %}
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const menuToggle = document.getElementById('menuToggle');
-            const mobileMenu = document.getElementById('mobileMenu');
-            
-            if (menuToggle && mobileMenu) {
-                menuToggle.addEventListener('click', function() {
-                    mobileMenu.classList.toggle('active');
-                });
-            }
-            
-            // Закрывать меню при клике на пункт меню
-            const navLinks = document.querySelectorAll('.nav-link');
-            navLinks.forEach(link => {
-                link.addEventListener('click', function() {
-                    if (window.innerWidth <= 768) {
-                        mobileMenu.classList.remove('active');
-                    }
-                });
-            });
-            
-            // Закрывать меню при изменении размера окна
-            window.addEventListener('resize', function() {
-                if (window.innerWidth > 768) {
-                    mobileMenu.classList.remove('active');
-                }
-            });
-        });
-    </script>
 </body>
 </html> 
