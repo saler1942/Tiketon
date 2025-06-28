@@ -158,32 +158,87 @@ def event_edit(request, event_id):
     if request.method == 'POST':
         if request.user.is_staff or event.created_by == request.user:
             if 'add_volunteer' in request.POST:
-                volunteer_id = request.POST.get('volunteer_id')
+                # Проверяем, есть ли множественные ID сканеров (через запятую)
+                volunteer_ids = request.POST.getlist('volunteer_ids[]', [])
+                # Если нет множественных ID, проверяем одиночный ID
+                if not volunteer_ids:
+                    volunteer_id = request.POST.get('volunteer_id')
+                    if volunteer_id:
+                        volunteer_ids = [volunteer_id]
+                
+                # Проверяем, есть ли строка с именами для поиска
+                volunteer_names = request.POST.get('volunteer_names', '').strip()
+                if volunteer_names:
+                    # Разбиваем строку на имена и ищем сканеров
+                    names = volunteer_names.split()
+                    if names:
+                        # Создаем запрос для поиска сканеров по именам
+                        query = Q()
+                        for name in names:
+                            if name:
+                                query |= Q(first_name__icontains=name) | Q(last_name__icontains=name)
+                        
+                        # Получаем ID найденных сканеров
+                        found_scanners = Scanner.objects.filter(query).values_list('id', flat=True)
+                        volunteer_ids.extend([str(id) for id in found_scanners])
+                
+                # Убираем дубликаты
+                volunteer_ids = list(set(volunteer_ids))
+                
+                # Добавляем сканеров
                 current_participants_count = participants.count()
-                if current_participants_count >= event.max_scanners:
-                    messages.error(request, f'Превышено максимальное количество волонтеров ({event.max_scanners})')
-                    return redirect('event_edit', event_id=event.id)
-                if volunteer_id and not participants.filter(volunteer_id=volunteer_id).exists():
-                    EventParticipant.objects.create(event=event, volunteer_id=volunteer_id)
+                added_count = 0
+                not_added_count = 0
+                
+                for volunteer_id in volunteer_ids:
+                    # Проверяем, не превышен ли лимит
+                    if current_participants_count + added_count >= event.max_scanners:
+                        messages.error(request, f'Превышено максимальное количество волонтеров ({event.max_scanners})')
+                        break
+                    
+                    # Проверяем, не добавлен ли уже этот сканер
+                    if not participants.filter(volunteer_id=volunteer_id).exists():
+                        try:
+                            volunteer = Scanner.objects.get(id=volunteer_id)
+                            EventParticipant.objects.create(event=event, volunteer=volunteer)
+                            added_count += 1
+                        except Scanner.DoesNotExist:
+                            not_added_count += 1
+                    else:
+                        not_added_count += 1
+                
+                if added_count > 0:
+                    messages.success(request, f'Добавлено {added_count} сканеров')
+                if not_added_count > 0:
+                    messages.warning(request, f'{not_added_count} сканеров не были добавлены (уже участвуют или не найдены)')
+                
                 return redirect('event_edit', event_id=event.id)
             if 'remove_participant' in request.POST and request.user.is_staff:
                 participant_id = request.POST.get('participant_id')
                 try:
                     participant = EventParticipant.objects.get(id=participant_id, event=event)
                     participant.delete()
+                    messages.success(request, f'Участник удален из мероприятия')
                 except EventParticipant.DoesNotExist:
-                    pass
+                    messages.error(request, 'Участник не найден')
                 return redirect('event_edit', event_id=event.id)
             if 'save_participants' in request.POST and request.user.is_staff:
+                messages.success(request, 'Изменения сохранены')
                 pass
             if 'set_duration' in request.POST and request.user.is_staff:
-                duration_hours = float(request.POST.get('duration_hours', 0))
-                event.duration_hours = duration_hours
-                event.save()
-                for p in participants:
-                    awarded_hours = duration_hours
-                    p.hours_awarded = awarded_hours
-                    p.save()
+                try:
+                    duration_hours = float(request.POST.get('duration_hours', 0))
+                    event.duration_hours = duration_hours
+                    event.save()
+                    for p in participants:
+                        awarded_hours = duration_hours
+                        p.hours_awarded = awarded_hours
+                        p.save()
+                    messages.success(request, f'Продолжительность мероприятия установлена: {duration_hours} часов')
+                except ValueError:
+                    messages.error(request, 'Неверное значение продолжительности')
+        else:
+            messages.error(request, 'У вас нет прав для редактирования этого мероприятия')
         clear_scanners_cache()
         return redirect('event_edit', event_id=event.id)
     return render(request, 'core/event_edit.html', {
@@ -194,16 +249,29 @@ def event_edit(request, event_id):
         'is_admin': request.user.is_staff
     })
 
+@team_leader_required
 def volunteer_search(request):
     q = request.GET.get('q', '').strip()
     event_id = request.GET.get('event_id')
     exclude_ids = list(EventParticipant.objects.filter(event_id=event_id).values_list('volunteer_id', flat=True)) if event_id else []
-    if q:
-        scanners = Scanner.objects.filter(
-            Q(first_name__icontains=q) | Q(last_name__icontains=q) | Q(email__icontains=q)
-        ).exclude(id__in=exclude_ids).order_by('last_name', 'first_name')
+    
+    # Если в запросе несколько имен через пробел, разбиваем их
+    search_terms = q.split()
+    if search_terms:
+        # Создаем пустой Q-объект для OR-условий
+        query = Q()
+        # Для каждого термина поиска добавляем условия
+        for term in search_terms:
+            term = term.strip()
+            if term:
+                # Добавляем условия через OR для каждого термина
+                query |= Q(first_name__icontains=term) | Q(last_name__icontains=term) | Q(email__icontains=term)
+    
+        # Применяем собранный запрос
+        scanners = Scanner.objects.filter(query).exclude(id__in=exclude_ids).order_by('last_name', 'first_name')
     else:
         scanners = Scanner.objects.none()
+    
     data = [
         {'id': v.id, 'name': f'{v.first_name} {v.last_name}', 'email': v.email}
         for v in scanners
@@ -511,11 +579,66 @@ def convert_pptx_to_png(pptx_path):
             # Зеленый текст как на фото
             draw.text((name_x, name_y), name, font=name_font, fill=(120, 220, 80))
         
-        # Блок благодарности (как на скриншоте)
+        # Определяем годы для текста благодарности
+        years_text = "2024 and 2025"  # По умолчанию
+        
+        # Если есть список мероприятий, извлекаем годы из них
+        if events_list:
+            years = set()
+            for event in events_list:
+                if 'date' in event:
+                    try:
+                        # Извлекаем год из даты в формате DD.MM.YYYY
+                        date_parts = event['date'].split('.')
+                        if len(date_parts) == 3:
+                            years.add(date_parts[2])  # Год - последняя часть
+                    except:
+                        pass
+            
+            # Если нашли годы, формируем строку
+            if years:
+                sorted_years = sorted(years)
+                if len(sorted_years) == 1:
+                    years_text = sorted_years[0]
+                elif len(sorted_years) == 2:
+                    years_text = f"{sorted_years[0]} and {sorted_years[1]}"
+                else:
+                    # Для трех и более лет используем перечисление с запятыми и "and" перед последним
+                    years_text = ", ".join(sorted_years[:-1]) + " and " + sorted_years[-1]
+        
+        # Если передан период, извлекаем годы из него
+        elif period:
+            try:
+                # Предполагаем, что период имеет формат "DD.MM.YYYY - DD.MM.YYYY"
+                period_parts = period.split(' - ')
+                if len(period_parts) == 2:
+                    start_year = period_parts[0].split('.')[-1]
+                    end_year = period_parts[1].split('.')[-1]
+                    
+                    if start_year == end_year:
+                        years_text = start_year
+                    else:
+                        years_text = f"{start_year} and {end_year}"
+            except:
+                pass
+        
+        # Если передана одиночная дата мероприятия
+        elif event_date:
+            try:
+                # Предполагаем формат даты "DD.MM.YYYY" или объект datetime
+                if isinstance(event_date, str):
+                    year = event_date.split('.')[-1]
+                    years_text = year
+                else:
+                    years_text = str(event_date.year)
+            except:
+                pass
+
+        # Блок благодарности с динамическими годами
         lines = [
             "We, the Ticketon company, would like to sincerely express our gratitude and",
             "appreciation towards your incredible work and support in organizing",
-            "our events in 2024 and 2025. You played important role in organization of",
+            f"our events in {years_text}. You played important role in organization of",
             "each event. We hope to see you again in upcoming events!"
         ]
         main_font = ImageFont.truetype(sans_italic, size=16 * scale)
@@ -585,15 +708,19 @@ def convert_pptx_to_png(pptx_path):
             stamp_y = center_y - stamp_h // 2
             arrow.paste(stamp, (stamp_x, stamp_y), stamp)
 
-        # Правая секция: крупный текст, автоуменьшение если не помещается
+        # Правая секция: крупный текст, увеличиваем размер имени директора и слова "director"
         sign_text = "Torgunakova V. K."
         dir_text = "director"
-        max_width = section_w - 2 * int(10 * scale)  # внутренний отступ
-        base_sign_font_size = int(20.9 * 1.5 * scale)
-        base_dir_font_size = int(19 * 1.5 * scale)
-        min_font_size = int(10 * scale)
+        max_width = section_w - 2 * int(5 * scale)  # Уменьшаем внутренний отступ для большего текста
+        
+        # Увеличиваем базовый размер шрифта для имени директора и слова "director"
+        base_sign_font_size = int(25 * 1.5 * scale)  # Было 20.9 * 1.5
+        base_dir_font_size = int(22 * 1.5 * scale)   # Было 19 * 1.5
+        
+        min_font_size = int(15 * scale)  # Увеличиваем минимальный размер шрифта
         sign_font_size = base_sign_font_size
         dir_font_size = base_dir_font_size
+        
         while True:
             sign_font = ImageFont.truetype(impact_path, size=sign_font_size)
             dir_font = ImageFont.truetype(impact_path, size=dir_font_size)
@@ -610,12 +737,15 @@ def convert_pptx_to_png(pptx_path):
                 sign_w, sign_h = get_text_size(sign_text, sign_font)
                 dir_w, dir_h = get_text_size(dir_text, dir_font)
                 break
+        
         right_section_x = margin + 2 * section_w + 2 * gap
         right_section_y = margin
         sign_x = right_section_x + (section_w - sign_w) // 2
         sign_y = right_section_y + 10 * scale
         dir_x = right_section_x + (section_w - dir_w) // 2
-        dir_y = sign_y + sign_h + int(0.25 * sign_h)
+        dir_y = sign_y + sign_h + int(0.2 * sign_h)  # Уменьшаем расстояние между именем и должностью
+        
+        # Рисуем имя и должность директора
         adraw.text((sign_x, sign_y), sign_text, font=sign_font, fill=(0,0,0,255))
         adraw.text((dir_x, dir_y), dir_text, font=dir_font, fill=(255,255,255,255))
 
@@ -625,18 +755,32 @@ def convert_pptx_to_png(pptx_path):
 
         temp_dir = tempfile.mkdtemp()
         temp_img_path = os.path.join(temp_dir, 'cert.png')
-        img.convert('RGB').save(temp_img_path, 'PNG')
+        img.save(temp_img_path, 'PNG')
 
+        # Использование ReportLab для создания PDF без артефактов
+        pdf_width, pdf_height = 1123, 794  # Размеры PDF в точках
         temp_pdf_path = os.path.join(temp_dir, 'certificate.pdf')
-        c = canvas.Canvas(temp_pdf_path, pagesize=(width, height))
-        c.drawImage(temp_img_path, 0, 0, width=width, height=height)
+        
+        # Создаем PDF с чистым черным фоном, без артефактов
+        c = canvas.Canvas(temp_pdf_path, pagesize=(pdf_width, pdf_height))
+        
+        # Заливаем весь PDF черным цветом (без границ)
+        c.setFillColor((0, 0, 0))
+        c.rect(0, 0, pdf_width, pdf_height, fill=1, stroke=0)
+        
+        # Добавляем изображение сертификата (без верхней черной линии)
+        c.drawImage(temp_img_path, 0, 0, width=pdf_width, height=pdf_height)
+        
         c.save()
 
         with open(temp_pdf_path, 'rb') as f:
             pdf_data = f.read()
+        
+        # Очистка временных файлов
         os.remove(temp_img_path)
         os.remove(temp_pdf_path)
         os.rmdir(temp_dir)
+        
         return pdf_data
     except Exception as e:
         print(f"Ошибка при создании PNG: {e}")
@@ -861,10 +1005,12 @@ def generate_scanner_certificate(request, scanner_id):
         scanner = get_object_or_404(Scanner, id=scanner_id)
         participations = EventParticipant.objects.filter(volunteer=scanner).select_related('event')
         if not participations.exists():
-            return JsonResponse({"error": "Сканер еще не участвовал на мероприятиях"}, status=400)
+            messages.error(request, "Сканер еще не участвовал на мероприятиях")
+            return redirect('scanner_certificates')
         total_hours = participations.aggregate(total_hours=Sum('hours_awarded', output_field=FloatField()))['total_hours'] or 0.0
         if total_hours == 0:
-            return JsonResponse({"error": "Сканер уже получил сертификат и у него нет часов"}, status=400)
+            messages.error(request, "Сканер уже получил сертификат и у него нет часов")
+            return redirect('scanner_certificates')
         date_range = participations.aggregate(first_event=Min('event__date'), last_event=Max('event__date'))
         first_date = date_range['first_event']
         last_date = date_range['last_event']
@@ -889,7 +1035,8 @@ def generate_scanner_certificate(request, scanner_id):
     except Exception as e:
         import traceback
         trace = traceback.format_exc()
-        return JsonResponse({"error": str(e), "trace": trace}, status=400)
+        messages.error(request, f"Ошибка при создании сертификата: {str(e)}")
+        return redirect('scanner_certificates')
 
 @team_leader_required
 def generate_all_scanner_certificates(request):
@@ -979,52 +1126,32 @@ def scanner_certificates(request):
 
 @team_leader_required
 def scanner_events_api(request, scanner_id):
-    """
-    API для получения списка всех мероприятий сканера
-    """
     try:
         scanner = get_object_or_404(Scanner, id=scanner_id)
         participations = EventParticipant.objects.filter(volunteer=scanner).select_related('event')
-        
         if not participations.exists():
-            return JsonResponse({
-                "events": [],
-                "total_hours": 0,
-                "first_date": "",
-                "last_date": ""
-            })
+            messages.info(request, "У сканера нет мероприятий")
+            return JsonResponse({"events": [], "total_hours": 0})
         
-        # Получаем суммарные часы
-        total_hours_query = participations.aggregate(
-            total_hours=Sum('hours_awarded', output_field=FloatField())
-        )
-        total_hours = total_hours_query['total_hours'] or 0.0
-        
-        # Получаем даты первого и последнего мероприятия
-        date_range = participations.aggregate(
-            first_event=Min('event__date'),
-            last_event=Max('event__date')
-        )
+        total_hours = participations.aggregate(total_hours=Sum('hours_awarded', output_field=FloatField()))['total_hours'] or 0.0
+        date_range = participations.aggregate(first_event=Min('event__date'), last_event=Max('event__date'))
         first_date = date_range['first_event']
         last_date = date_range['last_event']
         
-        # Формируем список мероприятий
-        events_list = []
-        for p in participations:
-            events_list.append({
-                'name': p.event.name,
-                'date': p.event.date.strftime("%d.%m.%Y"),
-                'hours': float(p.hours_awarded)
-            })
+        events = [{
+            'name': p.event.name,
+            'date': p.event.date.strftime("%d.%m.%Y"),
+            'hours': p.hours_awarded
+        } for p in participations]
         
         return JsonResponse({
-            "events": events_list,
-            "total_hours": float(total_hours),
-            "first_date": first_date.strftime("%d.%m.%Y"),
-            "last_date": last_date.strftime("%d.%m.%Y")
+            "events": events,
+            "total_hours": total_hours,
+            "first_date": first_date.strftime("%d.%m.%Y") if first_date else None,
+            "last_date": last_date.strftime("%d.%m.%Y") if last_date else None
         })
-        
     except Exception as e:
+        messages.error(request, f"Ошибка при получении данных: {str(e)}")
         return JsonResponse({"error": str(e)}, status=400)
 
 @team_leader_required
@@ -1168,11 +1295,11 @@ def all_scanners_list(request):
 def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader_name=None, period=None, events_list=None):
     from PIL import Image as PILImage, ImageDraw, ImageFont
     from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import landscape, A4
     import tempfile, os
 
     base_dir = settings.BASE_DIR
     bg_path = os.path.join(base_dir, 'static', 'templates', 'background.png')
-    overlay_path = os.path.join(base_dir, 'static', 'templates', 'back_black.png')
     logo_path = os.path.join(base_dir, 'static', 'templates', 'image.png')
     stamp_path = os.path.join(base_dir, 'static', 'templates', 'stamp.png')
     impact_path = os.path.join(base_dir, 'static', 'fonts', 'IMPACT.TTF')
@@ -1182,9 +1309,21 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
     # Увеличиваем разрешение для максимального качества
     scale = 2
     width, height = 1123 * scale, 794 * scale
+    
+    # Создаем полностью черный фон как базовый слой
+    img = PILImage.new('RGB', (width, height), (0, 0, 0))
+    
+    # Загружаем и накладываем основной фон
     bg = PILImage.open(bg_path).convert('RGBA').resize((width, height))
-    overlay = PILImage.open(overlay_path).convert('RGBA').resize((width, height))
-    img = PILImage.alpha_composite(bg, overlay)
+    img.paste(bg, (0, 0), bg)
+    
+    # Создаем полупрозрачный черный слой вместо использования back_black.png
+    # Создаем новое RGBA изображение с черным цветом и прозрачностью 60%
+    overlay = PILImage.new('RGBA', (width, height), (0, 0, 0, 153))  # 153 = 60% непрозрачности
+    
+    # Накладываем полупрозрачный черный слой поверх основного фона
+    img.paste((0, 0, 0), (0, 0, width, height), overlay)
+    
     draw = ImageDraw.Draw(img)
 
     # Логотип в левый нижний угол (logo_scale = 0.9)
@@ -1237,11 +1376,66 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
     name_y = pres_y + pres_h + 10 * scale
     draw.text((name_x, name_y), name_text, font=impact_name, fill=(76,175,80,255))
 
-    # Блок благодарности (как на скриншоте)
+    # Определяем годы для текста благодарности
+    years_text = "2024 and 2025"  # По умолчанию
+    
+    # Если есть список мероприятий, извлекаем годы из них
+    if events_list:
+        years = set()
+        for event in events_list:
+            if 'date' in event:
+                try:
+                    # Извлекаем год из даты в формате DD.MM.YYYY
+                    date_parts = event['date'].split('.')
+                    if len(date_parts) == 3:
+                        years.add(date_parts[2])  # Год - последняя часть
+                except:
+                    pass
+        
+        # Если нашли годы, формируем строку
+        if years:
+            sorted_years = sorted(years)
+            if len(sorted_years) == 1:
+                years_text = sorted_years[0]
+            elif len(sorted_years) == 2:
+                years_text = f"{sorted_years[0]} and {sorted_years[1]}"
+            else:
+                # Для трех и более лет используем перечисление с запятыми и "and" перед последним
+                years_text = ", ".join(sorted_years[:-1]) + " and " + sorted_years[-1]
+    
+    # Если передан период, извлекаем годы из него
+    elif period:
+        try:
+            # Предполагаем, что период имеет формат "DD.MM.YYYY - DD.MM.YYYY"
+            period_parts = period.split(' - ')
+            if len(period_parts) == 2:
+                start_year = period_parts[0].split('.')[-1]
+                end_year = period_parts[1].split('.')[-1]
+                
+                if start_year == end_year:
+                    years_text = start_year
+                else:
+                    years_text = f"{start_year} and {end_year}"
+        except:
+            pass
+    
+    # Если передана одиночная дата мероприятия
+    elif event_date:
+        try:
+            # Предполагаем формат даты "DD.MM.YYYY" или объект datetime
+            if isinstance(event_date, str):
+                year = event_date.split('.')[-1]
+                years_text = year
+            else:
+                years_text = str(event_date.year)
+        except:
+            pass
+
+    # Блок благодарности с динамическими годами
     lines = [
         "We, the Ticketon company, would like to sincerely express our gratitude and",
         "appreciation towards your incredible work and support in organizing",
-        "our events in 2024 and 2025. You played important role in organization of",
+        f"our events in {years_text}. You played important role in organization of",
         "each event. We hope to see you again in upcoming events!"
     ]
     main_font = ImageFont.truetype(sans_italic, size=16 * scale)
@@ -1311,15 +1505,19 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
         stamp_y = center_y - stamp_h // 2
         arrow.paste(stamp, (stamp_x, stamp_y), stamp)
 
-    # Правая секция: крупный текст, автоуменьшение если не помещается
+    # Правая секция: крупный текст, увеличиваем размер имени директора и слова "director"
     sign_text = "Torgunakova V. K."
     dir_text = "director"
-    max_width = section_w - 2 * int(10 * scale)  # внутренний отступ
-    base_sign_font_size = int(20.9 * 1.5 * scale)
-    base_dir_font_size = int(19 * 1.5 * scale)
-    min_font_size = int(10 * scale)
+    max_width = section_w - 2 * int(5 * scale)  # Уменьшаем внутренний отступ для большего текста
+    
+    # Увеличиваем базовый размер шрифта для имени директора и слова "director"
+    base_sign_font_size = int(25 * 1.5 * scale)  # Было 20.9 * 1.5
+    base_dir_font_size = int(22 * 1.5 * scale)   # Было 19 * 1.5
+    
+    min_font_size = int(15 * scale)  # Увеличиваем минимальный размер шрифта
     sign_font_size = base_sign_font_size
     dir_font_size = base_dir_font_size
+    
     while True:
         sign_font = ImageFont.truetype(impact_path, size=sign_font_size)
         dir_font = ImageFont.truetype(impact_path, size=dir_font_size)
@@ -1336,12 +1534,15 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
             sign_w, sign_h = get_text_size(sign_text, sign_font)
             dir_w, dir_h = get_text_size(dir_text, dir_font)
             break
+    
     right_section_x = margin + 2 * section_w + 2 * gap
     right_section_y = margin
     sign_x = right_section_x + (section_w - sign_w) // 2
     sign_y = right_section_y + 10 * scale
     dir_x = right_section_x + (section_w - dir_w) // 2
-    dir_y = sign_y + sign_h + int(0.25 * sign_h)
+    dir_y = sign_y + sign_h + int(0.2 * sign_h)  # Уменьшаем расстояние между именем и должностью
+    
+    # Рисуем имя и должность директора
     adraw.text((sign_x, sign_y), sign_text, font=sign_font, fill=(0,0,0,255))
     adraw.text((dir_x, dir_y), dir_text, font=dir_font, fill=(255,255,255,255))
 
@@ -1351,18 +1552,32 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
 
     temp_dir = tempfile.mkdtemp()
     temp_img_path = os.path.join(temp_dir, 'cert.png')
-    img.convert('RGB').save(temp_img_path, 'PNG')
+    img.save(temp_img_path, 'PNG')
 
+    # Использование ReportLab для создания PDF без артефактов
+    pdf_width, pdf_height = 1123, 794  # Размеры PDF в точках
     temp_pdf_path = os.path.join(temp_dir, 'certificate.pdf')
-    c = canvas.Canvas(temp_pdf_path, pagesize=(1123, 794))
-    c.drawImage(temp_img_path, 0, 0, width=1123, height=794)
+    
+    # Создаем PDF с чистым черным фоном, без артефактов
+    c = canvas.Canvas(temp_pdf_path, pagesize=(pdf_width, pdf_height))
+    
+    # Заливаем весь PDF черным цветом (без границ)
+    c.setFillColor((0, 0, 0))
+    c.rect(0, 0, pdf_width, pdf_height, fill=1, stroke=0)
+    
+    # Добавляем изображение сертификата (без верхней черной линии)
+    c.drawImage(temp_img_path, 0, 0, width=pdf_width, height=pdf_height)
+    
     c.save()
 
     with open(temp_pdf_path, 'rb') as f:
         pdf_data = f.read()
+    
+    # Очистка временных файлов
     os.remove(temp_img_path)
     os.remove(temp_pdf_path)
     os.rmdir(temp_dir)
+    
     return pdf_data
 
 def convert_pptx_to_pdf(pptx_path):

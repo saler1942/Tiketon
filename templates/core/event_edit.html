@@ -35,11 +35,34 @@
     <div id="search-wrapper">
         <form id="add-volunteer-form" method="post">
             {% csrf_token %}
-            <div class="flex gap-2">
+            <div class="flex gap-2 mb-3">
                 <input id="volunteer-search" type="text" class="form-control" placeholder="Поиск сканера по имени или email" autocomplete="off" style="flex:1">
-                <input type="hidden" name="volunteer_id" id="volunteer-id">
-                <button name="add_volunteer" class="btn btn-primary" disabled id="add-volunteer-btn">Добавить сканера</button>
+                <button type="button" id="search-btn" class="btn btn-secondary">Найти</button>
             </div>
+            
+            <!-- Новое поле для ввода нескольких имен через пробел -->
+            <div class="mb-3">
+                <label for="volunteer-names" class="block mb-1">Добавить несколько сканеров через пробел:</label>
+                <div class="flex gap-2">
+                    <input id="volunteer-names" name="volunteer_names" type="text" class="form-control" placeholder="Введите имена через пробел (например: Bondareva Veronika Sergazy)" style="flex:1">
+                    <button name="add_volunteer" class="btn btn-primary">Добавить всех</button>
+                </div>
+                <small class="text-muted">Пример: Bondareva Veronika Sergazy Zhaniya Beksultan Nadiya</small>
+            </div>
+            
+            <!-- Контейнер для выбранных сканеров с галочками -->
+            <div id="selected-volunteers" class="mb-3" style="display: none;">
+                <h3 class="mb-2">Выбранные сканеры:</h3>
+                <div id="selected-volunteers-list" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 4px;">
+                    <!-- Здесь будут отображаться выбранные сканеры -->
+                </div>
+                <div class="mt-2">
+                    <button name="add_volunteer" id="add-selected-btn" class="btn btn-success">Добавить выбранных</button>
+                </div>
+            </div>
+            
+            <!-- Скрытые поля для передачи ID выбранных сканеров -->
+            <div id="volunteer-ids-container"></div>
         </form>
     </div>
 </div>
@@ -137,11 +160,16 @@
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const searchInput = document.getElementById('volunteer-search');
+    const searchBtn = document.getElementById('search-btn');
     const resultsBox = document.getElementById('volunteer-results');
-    const volunteerIdInput = document.getElementById('volunteer-id');
-    const addButton = document.getElementById('add-volunteer-btn');
+    const selectedVolunteersContainer = document.getElementById('selected-volunteers');
+    const selectedVolunteersList = document.getElementById('selected-volunteers-list');
+    const volunteerIdsContainer = document.getElementById('volunteer-ids-container');
     const limitNotification = document.getElementById('limit-notification');
     let timer;
+    
+    // Объект для хранения выбранных сканеров
+    const selectedVolunteers = {};
 
     // Проверяем, достигнут ли лимит сканеров
     const currentParticipantsCount = {{ participants|length }};
@@ -150,7 +178,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (currentParticipantsCount >= maxParticipantsCount) {
         limitNotification.style.display = 'block';
         searchInput.disabled = true;
-        addButton.disabled = true;
+        searchBtn.disabled = true;
+        document.getElementById('volunteer-names').disabled = true;
     }
 
     // Функция для позиционирования выпадающего списка
@@ -160,63 +189,133 @@ document.addEventListener('DOMContentLoaded', function() {
         resultsBox.style.left = rect.left + window.pageXOffset + 'px';
         resultsBox.style.top = rect.bottom + window.pageYOffset + 'px';
     }
+    
+    // Функция для обновления списка выбранных сканеров
+    function updateSelectedVolunteers() {
+        // Очищаем контейнер
+        selectedVolunteersList.innerHTML = '';
+        volunteerIdsContainer.innerHTML = '';
+        
+        // Получаем массив ID выбранных сканеров
+        const volunteerIds = Object.keys(selectedVolunteers);
+        
+        if (volunteerIds.length > 0) {
+            selectedVolunteersContainer.style.display = 'block';
+            
+            // Добавляем каждого выбранного сканера в список
+            volunteerIds.forEach(id => {
+                const volunteer = selectedVolunteers[id];
+                
+                // Создаем элемент для сканера
+                const div = document.createElement('div');
+                div.className = 'selected-volunteer-item';
+                div.style.padding = '5px';
+                div.style.marginBottom = '5px';
+                div.style.borderBottom = '1px solid #eee';
+                
+                // Создаем чекбокс
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = true;
+                checkbox.style.marginRight = '10px';
+                checkbox.addEventListener('change', function() {
+                    if (!this.checked) {
+                        delete selectedVolunteers[id];
+                        updateSelectedVolunteers();
+                    }
+                });
+                
+                // Создаем скрытое поле для передачи ID
+                const hiddenInput = document.createElement('input');
+                hiddenInput.type = 'hidden';
+                hiddenInput.name = 'volunteer_ids[]';
+                hiddenInput.value = id;
+                volunteerIdsContainer.appendChild(hiddenInput);
+                
+                // Добавляем имя сканера
+                div.appendChild(checkbox);
+                div.appendChild(document.createTextNode(volunteer.name + ' (' + volunteer.email + ')'));
+                
+                selectedVolunteersList.appendChild(div);
+            });
+            
+            // Показываем кнопку добавления
+            document.getElementById('add-selected-btn').style.display = 'block';
+        } else {
+            selectedVolunteersContainer.style.display = 'none';
+        }
+    }
 
     // Перемещаем список в body для абсолютного позиционирования
     document.body.appendChild(resultsBox);
 
-    searchInput.addEventListener('input', function() {
-        clearTimeout(timer);
-        const q = this.value.trim();
+    // Функция поиска сканеров
+    function searchVolunteers() {
+        const q = searchInput.value.trim();
         if (q.length < 2) { 
             resultsBox.style.display = 'none'; 
-            addButton.disabled = true;
             return; 
         }
         
-        timer = setTimeout(() => {
-            fetch(`/api/scanner-search/?q=${encodeURIComponent(q)}&event_id={{ event.id }}`)
-                .then(r => r.json())
-                .then(data => {
-                    resultsBox.innerHTML = '';
-                    if (data.results.length === 0) { 
+        fetch(`/api/scanner-search/?q=${encodeURIComponent(q)}&event_id={{ event.id }}`)
+            .then(r => r.json())
+            .then(data => {
+                resultsBox.innerHTML = '';
+                if (data.results.length === 0) { 
+                    const div = document.createElement('div');
+                    div.textContent = 'Не найдено сканеров';
+                    div.style.padding = '10px';
+                    div.style.color = '#666';
+                    resultsBox.appendChild(div);
+                } else {
+                    data.results.forEach(v => {
                         const div = document.createElement('div');
-                        div.textContent = 'Не найдено сканеров';
+                        div.textContent = v.name + ' (' + v.email + ')';
                         div.style.padding = '10px';
-                        div.style.color = '#666';
-                        resultsBox.appendChild(div);
-                    } else {
-                        data.results.forEach(v => {
-                            const div = document.createElement('div');
-                            div.textContent = v.name + ' (' + v.email + ')';
-                            div.style.padding = '10px';
-                            div.style.borderBottom = '1px solid #eee';
-                            div.style.cursor = 'pointer';
-                            
-                            div.addEventListener('mouseover', function() {
-                                this.style.backgroundColor = '#f0f0f0';
-                            });
-                            div.addEventListener('mouseout', function() {
-                                this.style.backgroundColor = '';
-                            });
-                            
-                            div.addEventListener('click', function() {
-                                searchInput.value = v.name + ' (' + v.email + ')';
-                                volunteerIdInput.value = v.id;
-                                resultsBox.style.display = 'none';
-                                addButton.disabled = false;
-                            });
-                            
-                            resultsBox.appendChild(div);
+                        div.style.borderBottom = '1px solid #eee';
+                        div.style.cursor = 'pointer';
+                        
+                        div.addEventListener('mouseover', function() {
+                            this.style.backgroundColor = '#f0f0f0';
                         });
-                    }
-                    
-                    // Обновляем позицию и показываем список
-                    updatePosition();
-                    resultsBox.style.display = 'block';
-                    addButton.disabled = true;
-                });
-        }, 200);
+                        div.addEventListener('mouseout', function() {
+                            this.style.backgroundColor = '';
+                        });
+                        
+                        div.addEventListener('click', function() {
+                            // Добавляем сканера в список выбранных
+                            selectedVolunteers[v.id] = {
+                                id: v.id,
+                                name: v.name,
+                                email: v.email
+                            };
+                            
+                            // Обновляем список выбранных сканеров
+                            updateSelectedVolunteers();
+                            
+                            // Очищаем поле поиска и скрываем результаты
+                            searchInput.value = '';
+                            resultsBox.style.display = 'none';
+                        });
+                        
+                        resultsBox.appendChild(div);
+                    });
+                }
+                
+                // Обновляем позицию и показываем список
+                updatePosition();
+                resultsBox.style.display = 'block';
+            });
+    }
+
+    // Обработчик ввода в поле поиска
+    searchInput.addEventListener('input', function() {
+        clearTimeout(timer);
+        timer = setTimeout(searchVolunteers, 200);
     });
+    
+    // Обработчик клика на кнопку поиска
+    searchBtn.addEventListener('click', searchVolunteers);
 
     // Обновляем позицию при прокрутке и изменении размера окна
     window.addEventListener('resize', updatePosition);
@@ -229,13 +328,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    // Проверка на превышение лимита при отправке формы
     document.getElementById('add-volunteer-form').addEventListener('submit', function(e) {
-        if (!volunteerIdInput.value) {
-            e.preventDefault();
-            searchInput.focus();
-            return;
-        }
-        
         // Проверяем, не превышен ли лимит сканеров
         if (currentParticipantsCount >= maxParticipantsCount) {
             e.preventDefault();
@@ -252,22 +346,13 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 500);
         }
     });
-
+    
+    // Закрытие выпадающего списка при клике вне его
     document.addEventListener('click', function(e) {
-        if (!resultsBox.contains(e.target) && e.target !== searchInput) {
+        if (!resultsBox.contains(e.target) && e.target !== searchInput && e.target !== searchBtn) {
             resultsBox.style.display = 'none';
         }
     });
-    
-    // Показываем сообщение об ошибке, если оно есть в URL
-    {% if messages %}
-        {% for message in messages %}
-            {% if message.tags == 'error' %}
-                limitNotification.textContent = "{{ message }}";
-                limitNotification.style.display = 'block';
-            {% endif %}
-        {% endfor %}
-    {% endif %}
 });
 </script>
 {% endblock %} 
