@@ -11,6 +11,7 @@ class Scanner(models.Model):
     last_name = models.CharField(max_length=100)
     email = models.EmailField(blank=True, null=True)
     created_at = models.DateTimeField(default=timezone.now)
+    total_certificate_hours = models.FloatField(default=0.0, help_text="Общее количество часов, полученных в сертификатах")
     
     def __str__(self):
         return f"{self.first_name} {self.last_name}"

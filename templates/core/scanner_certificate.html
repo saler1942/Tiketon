@@ -143,15 +143,40 @@ function selectScanner(id, name, email) {
                 eventsHtml += `<tr><td>${event.name}</td><td>${event.date}</td><td>${event.hours}</td></tr>`;
             });
             eventsHtml += '</tbody></table></div>';
+            
+            // Добавляем информацию о часах
             eventsHtml += `
                 <div style="margin-top: 1rem;">
-                    <p><strong>Суммарные часы:</strong> ${data.total_hours}</p>
-                    <p><strong>Период участия:</strong> ${data.first_date} - ${data.last_date}</p>
+                    <div style="display: flex; flex-wrap: wrap; gap: 1rem;">
+                        <div style="flex: 1; min-width: 200px; background-color: #f8f9fa; padding: 1rem; border-radius: 8px;">
+                            <h4 style="margin-top: 0;">Текущие часы</h4>
+                            <p style="font-size: 1.5rem; font-weight: bold; margin-bottom: 0;">${data.current_hours}</p>
+                            <p style="color: #666; margin-top: 0.5rem;">Доступно для сертификата</p>
+                        </div>
+                        <div style="flex: 1; min-width: 200px; background-color: #f8f9fa; padding: 1rem; border-radius: 8px;">
+                            <h4 style="margin-top: 0;">Получено в сертификатах</h4>
+                            <p style="font-size: 1.5rem; font-weight: bold; margin-bottom: 0;">${data.total_certificate_hours}</p>
+                            <p style="color: #666; margin-top: 0.5rem;">Ранее выданные часы</p>
+                        </div>
+                        <div style="flex: 1; min-width: 200px; background-color: #e9f7ef; padding: 1rem; border-radius: 8px;">
+                            <h4 style="margin-top: 0;">Всего часов</h4>
+                            <p style="font-size: 1.5rem; font-weight: bold; margin-bottom: 0;">${data.total_all_hours}</p>
+                            <p style="color: #666; margin-top: 0.5rem;">Суммарно за все время</p>
+                        </div>
+                    </div>
+                    <p style="margin-top: 1rem;"><strong>Период участия:</strong> ${data.first_date} - ${data.last_date}</p>
                 </div>
             `;
+            
             scannerEventsDiv.innerHTML = eventsHtml;
-            generateBtn.style.display = 'inline-block';
-            generateBtn.href = `/certificates/scanner/${id}/`;
+            
+            // Показываем кнопку генерации сертификата только если есть доступные часы
+            if (data.current_hours > 0) {
+                generateBtn.style.display = 'inline-block';
+                generateBtn.href = `/certificates/scanner/${id}/`;
+            } else {
+                generateBtn.style.display = 'none';
+            }
         })
         .catch(error => {
             scannerEventsDiv.innerHTML = '<p class="text-danger">Ошибка при загрузке данных</p>';

@@ -120,8 +120,7 @@ def event_create(request):
         start_date = request.POST.get('start_date')
         end_date = request.POST.get('end_date')
         max_scanners = request.POST.get('max_scanners', 10)
-        location = request.POST.get('location', 'Астана')
-        description = request.POST.get('description', '')
+        location = request.POST.get('location', '')
         
         # Если указан период, используем его, иначе обычную дату
         if start_date and end_date:
@@ -132,7 +131,7 @@ def event_create(request):
                 end_date=end_date,
                 max_scanners=max_scanners,
                 location=location,
-                description=description,
+                description='',
                 created_by=request.user
             )
         else:
@@ -143,7 +142,7 @@ def event_create(request):
                 end_date=date if date else None,
                 max_scanners=max_scanners,
                 location=location,
-                description=description,
+                description='',
                 created_by=request.user
             )
         return redirect('event_edit', event_id=event.id)
@@ -1007,25 +1006,42 @@ def generate_scanner_certificate(request, scanner_id):
         if not participations.exists():
             messages.error(request, "Сканер еще не участвовал на мероприятиях")
             return redirect('scanner_certificates')
-        total_hours = participations.aggregate(total_hours=Sum('hours_awarded', output_field=FloatField()))['total_hours'] or 0.0
-        if total_hours == 0:
-            messages.error(request, "Сканер уже получил сертификат и у него нет часов")
+        
+        # Получаем текущие часы, доступные для сертификата
+        current_hours = participations.aggregate(total_hours=Sum('hours_awarded', output_field=FloatField()))['total_hours'] or 0.0
+        
+        if current_hours == 0:
+            messages.error(request, "У сканера нет доступных часов для получения сертификата")
             return redirect('scanner_certificates')
+        
+        # Получаем диапазон дат мероприятий
         date_range = participations.aggregate(first_event=Min('event__date'), last_event=Max('event__date'))
         first_date = date_range['first_event']
         last_date = date_range['last_event']
         period_text = f"{first_date.strftime('%d.%m.%Y')} - {last_date.strftime('%d.%m.%Y')}"
+        
+        # Формируем список мероприятий для сертификата
         events_list = [{
             'name': p.event.name,
             'date': p.event.date.strftime("%d.%m.%Y"),
             'hours': p.hours_awarded
         } for p in participations]
+        
         full_name = f"{scanner.first_name} {scanner.last_name}".upper()
-        hours = round(total_hours)
+        hours = round(current_hours)
+        
+        # Обновляем общее количество часов, полученных в сертификатах
+        scanner.total_certificate_hours += current_hours
+        scanner.save()
+        
+        # Создаем сертификат
         file_data = create_certificate_pdf(full_name, hours, period=period_text, events_list=events_list)
+        
+        # Обнуляем часы сканера при получении сертификата
         for participant in participations:
             participant.hours_awarded = 0
             participant.save()
+        
         filename = f"certificate_{scanner.last_name}_{scanner.first_name}.pdf"
         
         # Всегда возвращаем PDF напрямую
@@ -1129,11 +1145,17 @@ def scanner_events_api(request, scanner_id):
     try:
         scanner = get_object_or_404(Scanner, id=scanner_id)
         participations = EventParticipant.objects.filter(volunteer=scanner).select_related('event')
+        
         if not participations.exists():
             messages.info(request, "У сканера нет мероприятий")
             return JsonResponse({"events": [], "total_hours": 0})
         
-        total_hours = participations.aggregate(total_hours=Sum('hours_awarded', output_field=FloatField()))['total_hours'] or 0.0
+        # Текущие доступные часы (которые можно использовать для сертификата)
+        current_hours = participations.aggregate(total_hours=Sum('hours_awarded', output_field=FloatField()))['total_hours'] or 0.0
+        
+        # Общее количество часов (включая уже полученные в сертификатах)
+        total_all_hours = current_hours + scanner.total_certificate_hours
+        
         date_range = participations.aggregate(first_event=Min('event__date'), last_event=Max('event__date'))
         first_date = date_range['first_event']
         last_date = date_range['last_event']
@@ -1146,7 +1168,9 @@ def scanner_events_api(request, scanner_id):
         
         return JsonResponse({
             "events": events,
-            "total_hours": total_hours,
+            "current_hours": current_hours,  # Текущие доступные часы
+            "total_certificate_hours": scanner.total_certificate_hours,  # Часы, полученные в сертификатах
+            "total_all_hours": total_all_hours,  # Общее количество часов
             "first_date": first_date.strftime("%d.%m.%Y") if first_date else None,
             "last_date": last_date.strftime("%d.%m.%Y") if last_date else None
         })
@@ -1232,15 +1256,21 @@ def all_scanners_list(request):
         total_hours=Coalesce(Sum('eventparticipant__hours_awarded'), 0.0)
     )
     
-    # Применяем фильтры по часам на уровне базы данных
+    # Применяем фильтры по часам на уровне базы данных (учитываем общее количество часов)
     if filter_min_hours:
-        scanners = scanners.filter(total_hours__gte=float(filter_min_hours))
+        min_hours = float(filter_min_hours)
+        scanners = scanners.filter(Q(total_hours__gte=min_hours) | Q(total_certificate_hours__gte=min_hours) | 
+                                  Q(total_hours__add=F('total_certificate_hours'))>=min_hours)
     
     if filter_max_hours:
-        scanners = scanners.filter(total_hours__lte=float(filter_max_hours))
+        max_hours = float(filter_max_hours)
+        scanners = scanners.filter(Q(total_hours__lte=max_hours) & Q(total_certificate_hours__lte=max_hours) & 
+                                  Q(total_hours__add=F('total_certificate_hours'))<=max_hours)
     
-    # Сортируем по убыванию часов
-    scanners = scanners.order_by('-total_hours', 'last_name', 'first_name')
+    # Сортируем по убыванию общего количества часов
+    scanners = scanners.annotate(
+        all_hours=F('total_hours') + F('total_certificate_hours')
+    ).order_by('-all_hours', 'last_name', 'first_name')
     
     # Пагинация
     paginator = Paginator(scanners, 20)  # 20 сканеров на страницу
@@ -1276,6 +1306,7 @@ def all_scanners_list(request):
             'last_name': scanner.last_name,
             'email': scanner.email,
             'total_hours': scanner.total_hours,
+            'total_certificate_hours': scanner.total_certificate_hours,
             'events': participation_by_scanner.get(scanner.id, [])
         })
     
