@@ -16,6 +16,37 @@ class Scanner(models.Model):
     def __str__(self):
         return f"{self.first_name} {self.last_name}"
 
+class TeamLeader(models.Model):
+    first_name = models.CharField(max_length=100)
+    last_name = models.CharField(max_length=100)
+    email = models.EmailField(blank=True, null=True)
+    scanner = models.OneToOneField(Scanner, on_delete=models.CASCADE, related_name='teamleader', null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    
+    def __str__(self):
+        return f"{self.first_name} {self.last_name}"
+    
+    def save(self, *args, **kwargs):
+        # При сохранении тимлидера, проверяем наличие связанного сканера
+        if not self.scanner:
+            # Ищем сканера с таким же именем и фамилией
+            scanner = Scanner.objects.filter(
+                first_name=self.first_name,
+                last_name=self.last_name
+            ).first()
+            
+            # Если сканер не найден, создаем его
+            if not scanner:
+                scanner = Scanner.objects.create(
+                    first_name=self.first_name,
+                    last_name=self.last_name,
+                    email=self.email
+                )
+            
+            self.scanner = scanner
+        
+        super().save(*args, **kwargs)
+
 class TeamLeaderProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     

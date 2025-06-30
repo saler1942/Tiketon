@@ -1,15 +1,15 @@
 from django.contrib import admin
-from .models import Scanner, Event, EventParticipant
+from .models import Scanner, Event, EventParticipant, TeamLeader
 from django.contrib.auth.models import User, Group
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
 
 # Proxy-модель для User с кастомным verbose_name
-class TeamLeader(User):
+class TeamLeaderUser(User):
     class Meta:
         proxy = True
-        verbose_name = 'Тим лидер'
-        verbose_name_plural = 'Тим лидеры'
+        verbose_name = 'Тим лидер (пользователь)'
+        verbose_name_plural = 'Тим лидеры (пользователи)'
 
 # Отменяем стандартную регистрацию User
 admin.site.unregister(User)
@@ -45,12 +45,20 @@ class UserAdmin(BaseUserAdmin):
         self.message_user(request, 'Выбранные пользователи добавлены в тимлидеры.')
     make_team_leader.short_description = 'Сделать тимлидером'
 
-# Регистрируем proxy-модель TeamLeader вместо User
-admin.site.register(TeamLeader, UserAdmin)
+# Регистрируем proxy-модель TeamLeaderUser вместо User
+admin.site.register(TeamLeaderUser, UserAdmin)
+
+# Класс для админки TeamLeader
+class TeamLeaderAdmin(admin.ModelAdmin):
+    list_display = ('first_name', 'last_name', 'email', 'scanner')
+    list_filter = ('created_at',)
+    search_fields = ('first_name', 'last_name', 'email')
+    ordering = ('last_name', 'first_name')
+    raw_id_fields = ('scanner',)
 
 # Класс для админки сканера с фильтрацией и поиском
 class ScannerAdmin(admin.ModelAdmin):
-    list_display = ('first_name', 'last_name', 'email')
+    list_display = ('first_name', 'last_name', 'email', 'total_certificate_hours')
     list_filter = ('first_name', 'last_name')
     search_fields = ('first_name', 'last_name', 'email')
     ordering = ('last_name', 'first_name')
@@ -61,7 +69,7 @@ class EventAdmin(admin.ModelAdmin):
         'id', 'name', 'start_date', 'end_date', 'location'
     ]
     list_filter = ['start_date', 'end_date', 'location']
-    search_fields = ('name', 'leader__username', 'leader__first_name', 'leader__last_name')
+    search_fields = ('name', 'created_by__username', 'created_by__first_name', 'created_by__last_name')
     ordering = ('-date',)
 
 # Класс для админки участников с фильтрацией и поиском
@@ -75,6 +83,7 @@ class EventParticipantAdmin(admin.ModelAdmin):
 
 # Регистрируем остальные модели с кастомной админкой
 admin.site.register(Scanner, ScannerAdmin)
+admin.site.register(TeamLeader, TeamLeaderAdmin)
 admin.site.register(Event, EventAdmin)
 admin.site.register(EventParticipant, EventParticipantAdmin)
 
