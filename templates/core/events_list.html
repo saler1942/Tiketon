@@ -8,6 +8,16 @@
     <div class="flex gap-2" style="flex-wrap: wrap;">
         <a href="{% url 'event_create' %}" class="btn btn-primary">Добавить мероприятие</a>
         <a href="{% url 'all_scanners_list' %}" class="btn btn-secondary">Список сканеров</a>
+        <div class="dropdown" style="display: inline-block; position: relative;">
+            <button class="btn btn-info dropdown-btn">Система</button>
+            <div class="dropdown-content" style="position: absolute; right: 0; min-width: 220px; z-index: 10; background: white; border: 1px solid #ddd; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">
+                <a href="{% url 'purge_settings' %}" style="display: block; padding: 8px 12px; text-decoration: none; color: #333;">Настройки удаления</a>
+                <a href="{% url 'send_test_notification' %}" style="display: block; padding: 8px 12px; text-decoration: none; color: #333;">Отправить тестовое уведомление</a>
+                {% if user.is_staff %}
+                <a href="{% url 'notification_logs' %}" style="display: block; padding: 8px 12px; text-decoration: none; color: #333;">Журнал уведомлений</a>
+                {% endif %}
+            </div>
+        </div>
         {% if user.is_staff %}
         <a href="{% url 'admin:index' %}" class="btn btn-secondary">Админ-панель</a>
         {% endif %}
@@ -77,4 +87,23 @@
     <p class="mb-3" style="color: #666;">Измените фильтры или создайте новое мероприятие</p>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<style>
+.dropdown {
+    position: relative;
+    display: inline-block;
+}
+.dropdown-btn {
+    display: inline-block;
+    cursor: pointer;
+}
+.dropdown-content {
+    display: none;
+}
+.dropdown:hover .dropdown-content {
+    display: block;
+}
+</style>
 {% endblock %} 

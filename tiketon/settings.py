@@ -160,6 +160,15 @@ EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@freedom-ticketon.org')
 
+# Admin emails for notifications
+ADMINS = [
+    ('Admin', os.environ.get('ADMIN_EMAIL', 'admin@freedom-ticketon.org')),
+]
+
+# Telegram Bot settings
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
+TELEGRAM_CHAT_IDS = os.environ.get('TELEGRAM_CHAT_IDS', '').split(',')
+
 # Настройки кеширования
 CACHES = {
     'default': {

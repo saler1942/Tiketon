@@ -1,1 +1,0 @@
-web: gunicorn --chdir tiketon tiketon.wsgi:application --log-file - 

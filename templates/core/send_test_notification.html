@@ -1,0 +1,89 @@
+{% extends 'base.html' %}
+
+{% block title %}Отправка тестовых уведомлений{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row">
+        <div class="col-md-8 mx-auto">
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">Отправка тестовых уведомлений</h5>
+                </div>
+                <div class="card-body">
+                    <p class="mb-4">
+                        Эта страница позволяет отправлять тестовые уведомления для проверки работы системы автоматического удаления мероприятий.
+                        Вы можете отправить уведомление всем тимлидерам или указать конкретный адрес получателя.
+                    </p>
+                    
+                    <form method="post" class="mb-4">
+                        {% csrf_token %}
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Тип уведомления:</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="notification_type" id="telegram_type" value="telegram" checked>
+                                <label class="form-check-label" for="telegram_type">
+                                    Telegram
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="notification_type" id="email_type" value="email">
+                                <label class="form-check-label" for="email_type">
+                                    Email
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="test_recipient" class="form-label">Получатель для тестового уведомления:</label>
+                            <input type="text" class="form-control" id="test_recipient" name="test_recipient" placeholder="Оставьте пустым для отправки всем тимлидерам">
+                            <small class="form-text text-muted">
+                                Если поле пустое, уведомление будет отправлено всем тимлидерам. Для отправки конкретному получателю укажите его Telegram ID или email-адрес (в зависимости от выбранного типа уведомления).
+                            </small>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <button type="submit" class="btn btn-info">Отправить тестовое уведомление</button>
+                            <a href="{% url 'events' %}" class="btn btn-outline-secondary">Вернуться к мероприятиям</a>
+                        </div>
+                    </form>
+                    
+                    {% if recent_notifications %}
+                    <hr>
+                    <h6 class="mb-3">Последние отправленные тестовые уведомления:</h6>
+                    <div class="list-group">
+                        {% for notification in recent_notifications %}
+                        <div class="list-group-item">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span>
+                                    {% if notification.notification_type == 'telegram' %}
+                                        <i class="fas fa-paper-plane me-1"></i> {{ notification.recipient_telegram_id }}
+                                    {% else %}
+                                        <i class="fas fa-envelope me-1"></i> {{ notification.recipient_email }}
+                                    {% endif %}
+                                </span>
+                                <small class="text-muted">{{ notification.sent_at|date:"d.m.Y H:i" }}</small>
+                            </div>
+                            <small class="d-block mt-1">
+                                Отправитель: 
+                                {% if notification.sent_by %}
+                                    {{ notification.sent_by.first_name }} {{ notification.sent_by.last_name }}
+                                {% else %}
+                                    Система
+                                {% endif %}
+                            </small>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% if user.is_staff %}
+                    <div class="mt-3 text-end">
+                        <a href="{% url 'notification_logs' %}" class="btn btn-sm btn-outline-secondary">Просмотреть все уведомления</a>
+                    </div>
+                    {% endif %}
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

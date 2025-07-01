@@ -26,6 +26,71 @@
             display: flex;
             align-items: center;
         }
+        .navbar-menu {
+            display: flex;
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        .navbar-menu li {
+            margin-right: 15px;
+        }
+        .navbar-menu li:last-child {
+            margin-right: 0;
+        }
+        .navbar-menu a {
+            color: #333;
+            text-decoration: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+        }
+        .navbar-menu a:hover {
+            background-color: #f8f9fa;
+            color: #00a651;
+        }
+        .dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .dropdown-content {
+            display: none;
+            position: absolute;
+            background-color: #f9f9f9;
+            min-width: 200px;
+            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+            z-index: 1;
+            border-radius: 4px;
+        }
+        .dropdown-content a {
+            color: black;
+            padding: 12px 16px;
+            text-decoration: none;
+            display: block;
+            border-radius: 0;
+        }
+        .dropdown-content a:hover {
+            background-color: #f1f1f1;
+        }
+        .dropdown:hover .dropdown-content {
+            display: block;
+        }
+        .dropdown-btn {
+            display: flex;
+            align-items: center;
+        }
+        .dropdown-btn::after {
+            content: "▼";
+            font-size: 10px;
+            margin-left: 5px;
+        }
+        .notification-badge {
+            background-color: #f44336;
+            color: white;
+            border-radius: 50%;
+            padding: 2px 6px;
+            font-size: 12px;
+            margin-left: 5px;
+        }
         @media (max-width: 768px) {
             .navbar-nav {
                 width: 100%;
@@ -39,6 +104,20 @@
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
+                width: 100%;
+            }
+            .navbar-menu {
+                flex-direction: column;
+                width: 100%;
+                margin-top: 10px;
+            }
+            .navbar-menu li {
+                margin-right: 0;
+                margin-bottom: 5px;
+            }
+            .dropdown-content {
+                position: static;
+                box-shadow: none;
                 width: 100%;
             }
         }
@@ -98,9 +177,25 @@
                 </a>
             </div>
             {% if user.is_authenticated %}
-            <ul class="navbar-nav" id="mobileMenu">
-                <li class="nav-item">
-                    <span class="nav-link">{{ user.first_name }} {{ user.last_name }}</span>
+            <ul class="navbar-menu" id="mainMenu">
+                <li><a href="{% url 'events' %}">Мероприятия</a></li>
+                <li><a href="{% url 'all_scanners_list' %}">Сканеры</a></li>
+                <li><a href="{% url 'scanner_certificates' %}">Сертификаты</a></li>
+                <li class="dropdown">
+                    <a href="#" class="dropdown-btn">Система</a>
+                    <div class="dropdown-content">
+                        <a href="{% url 'purge_settings' %}">Настройки удаления мероприятий</a>
+                        <a href="{% url 'send_test_notification' %}">Отправить тестовое уведомление</a>
+                        {% if user.is_staff %}
+                        <a href="{% url 'notification_logs' %}">Журнал уведомлений</a>
+                        <a href="/admin/" target="_blank">Панель администратора</a>
+                        {% endif %}
+                    </div>
+                </li>
+                <li>
+                    <span style="padding: 8px 12px; display: inline-block;">
+                        {{ user.first_name }} {{ user.last_name }}
+                    </span>
                 </li>
             </ul>
             {% endif %}
@@ -126,5 +221,6 @@
     </div>
 
     {% block scripts %}{% endblock %}
+    {% block extra_js %}{% endblock %}
 </body>
 </html> 

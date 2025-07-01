@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Scanner, Event, EventParticipant, TeamLeader
+from .models import Scanner, Event, EventParticipant, TeamLeader, PurgeSettings, NotificationLog
 from django.contrib.auth.models import User, Group
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
@@ -62,6 +62,18 @@ class ScannerAdmin(admin.ModelAdmin):
     list_filter = ('first_name', 'last_name')
     search_fields = ('first_name', 'last_name', 'email')
     ordering = ('last_name', 'first_name')
+    
+    def save_model(self, request, obj, form, change):
+        # Run the full clean method which includes our custom validation
+        obj.full_clean()
+        super().save_model(request, obj, form, change)
+        
+    fieldsets = (
+        (None, {
+            'fields': ('first_name', 'last_name', 'email', 'total_certificate_hours'),
+            'description': '<div class="help" style="color: red; font-weight: bold;">Names must contain only English characters!</div>'
+        }),
+    )
 
 # Класс для админки мероприятий с фильтрацией и поиском
 class EventAdmin(admin.ModelAdmin):
@@ -81,11 +93,46 @@ class EventParticipantAdmin(admin.ModelAdmin):
     search_fields = ('event__name', 'volunteer__first_name', 'volunteer__last_name', 'volunteer__email')
     ordering = ('event', 'volunteer')
 
+# Класс для настроек автоматического удаления мероприятий
+class PurgeSettingsAdmin(admin.ModelAdmin):
+    list_display = ['purge_date', 'notification_days_before', 'active', 'updated_at', 'updated_by']
+    fieldsets = (
+        (None, {'fields': ('purge_date', 'notification_days_before', 'active')}),
+        ('Информация', {'fields': ('updated_by',), 'classes': ('collapse',)}),
+    )
+    readonly_fields = ('updated_at',)
+    
+    def save_model(self, request, obj, form, change):
+        obj.updated_by = request.user
+        super().save_model(request, obj, form, change)
+
+# Класс для логов уведомлений
+class NotificationLogAdmin(admin.ModelAdmin):
+    list_display = ['sent_at', 'get_recipient', 'notification_type', 'is_test', 'sent_by']
+    list_filter = ['sent_at', 'is_test', 'notification_type']
+    search_fields = ['recipient_email', 'recipient_telegram_id', 'message']
+    readonly_fields = ['sent_at', 'sent_by', 'recipient_email', 'recipient_telegram_id', 'notification_type', 'message', 'is_test']
+    
+    def get_recipient(self, obj):
+        if obj.notification_type == 'telegram':
+            return f"Telegram: {obj.recipient_telegram_id}"
+        else:
+            return f"Email: {obj.recipient_email}"
+    get_recipient.short_description = 'Получатель'
+    
+    def has_add_permission(self, request):
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        return False
+
 # Регистрируем остальные модели с кастомной админкой
 admin.site.register(Scanner, ScannerAdmin)
 admin.site.register(TeamLeader, TeamLeaderAdmin)
 admin.site.register(Event, EventAdmin)
 admin.site.register(EventParticipant, EventParticipantAdmin)
+admin.site.register(PurgeSettings, PurgeSettingsAdmin)
+admin.site.register(NotificationLog, NotificationLogAdmin)
 
 # Меняем название админки
 admin.site.site_header = 'Freedom Ticketon | TEAM SYRYM'

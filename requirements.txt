@@ -1,11 +1,12 @@
 Django==4.2.9
 gunicorn==21.2.0
-whitenoise==6.4.0
+whitenoise==6.6.0
 psycopg2-binary==2.9.6
 dj-database-url==2.0.0
-python-dotenv==1.0.0
+python-dotenv==1.0.1
 openpyxl==3.1.2
 python-dateutil==2.8.2
-Pillow>=10.0.0
-reportlab==4.0.0 
-python-pptx==0.6.23
+Pillow==10.1.0
+reportlab==4.0.9
+python-pptx==0.6.22
+python-telegram-bot==20.8

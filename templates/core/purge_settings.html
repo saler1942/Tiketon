@@ -1,0 +1,128 @@
+{% extends 'base.html' %}
+
+{% block title %}Настройки удаления мероприятий{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1 class="mb-4">Настройки автоматического удаления мероприятий</h1>
+    
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Текущие настройки</h5>
+                </div>
+                <div class="card-body">
+                    <p><strong>Дата ежегодного удаления:</strong> {{ settings.purge_date|date:"d.m" }}</p>
+                    <p><strong>Дней до уведомления:</strong> {{ settings.notification_days_before }}</p>
+                    <p><strong>Статус:</strong> 
+                        {% if settings.active %}
+                            <span class="badge bg-success">Активно</span>
+                        {% else %}
+                            <span class="badge bg-danger">Отключено</span>
+                        {% endif %}
+                    </p>
+                    <p><strong>Последнее обновление:</strong> {{ settings.updated_at|date:"d.m.Y H:i" }}</p>
+                    <p><strong>Обновил:</strong> {{ settings.updated_by.first_name }} {{ settings.updated_by.last_name }}</p>
+                    
+                    <hr>
+                    
+                    <h6>Следующее удаление:</h6>
+                    <div class="alert alert-info">
+                        <p><strong>Дата удаления:</strong> {{ next_purge_date|date:"d.m.Y" }}</p>
+                        <p><strong>Дата отправки уведомлений:</strong> {{ notification_date|date:"d.m.Y" }}</p>
+                        <p><strong>Мероприятий к удалению:</strong> {{ events_to_delete_count }}</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card mb-4">
+                <div class="card-header bg-warning">
+                    <h5 class="mb-0">Изменить настройки</h5>
+                </div>
+                <div class="card-body">
+                    <form method="post">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="update">
+                        
+                        <div class="row mb-3">
+                            <div class="col-6">
+                                <label for="purge_month" class="form-label">Месяц удаления:</label>
+                                <input type="number" class="form-control" id="purge_month" name="purge_month" 
+                                      value="{{ settings.purge_date|date:'m' }}" min="1" max="12" required>
+                            </div>
+                            <div class="col-6">
+                                <label for="purge_day" class="form-label">День удаления:</label>
+                                <input type="number" class="form-control" id="purge_day" name="purge_day" 
+                                      value="{{ settings.purge_date|date:'d' }}" min="1" max="31" required>
+                            </div>
+                            <div class="col-12 mt-1">
+                                <small class="text-muted">Укажите дату ежегодного удаления (месяц и день).</small>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="notification_days" class="form-label">Дней до уведомления:</label>
+                            <input type="number" class="form-control" id="notification_days" name="notification_days" 
+                                  value="{{ settings.notification_days_before }}" min="1" max="30" required>
+                            <small class="text-muted">За сколько дней до удаления отправлять уведомления.</small>
+                        </div>
+                        
+                        <div class="mb-3 form-check">
+                            <input type="checkbox" class="form-check-input" id="active" name="active" 
+                                  {% if settings.active %}checked{% endif %}>
+                            <label class="form-check-label" for="active">Активировать автоматическое удаление</label>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-warning">Сохранить настройки</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header bg-info text-white">
+                    <h5 class="mb-0">Тестовые уведомления</h5>
+                </div>
+                <div class="card-body">
+                    <p>Для отправки тестовых уведомлений перейдите на отдельную страницу:</p>
+                    <a href="{% url 'send_test_notification' %}" class="btn btn-info">Отправить тестовое уведомление</a>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0">Последние системные уведомления</h5>
+                </div>
+                <div class="card-body">
+                    {% if recent_logs %}
+                        <div class="list-group">
+                        {% for log in recent_logs %}
+                            <div class="list-group-item list-group-item-action">
+                                <div class="d-flex w-100 justify-content-between">
+                                    <h6 class="mb-1">{{ log.recipient_email }}</h6>
+                                    <small>{{ log.sent_at|date:"d.m.Y H:i" }}</small>
+                                </div>
+                                <p class="mb-1 text-truncate">{{ log.message|slice:":100" }}...</p>
+                            </div>
+                        {% endfor %}
+                        </div>
+                        {% if user.is_staff %}
+                        <div class="mt-3">
+                            <a href="{% url 'notification_logs' %}" class="btn btn-sm btn-outline-secondary">
+                                Просмотреть все уведомления
+                            </a>
+                        </div>
+                        {% endif %}
+                    {% else %}
+                        <div class="alert alert-info">
+                            Системные уведомления еще не отправлялись
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

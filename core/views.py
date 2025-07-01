@@ -37,8 +37,9 @@ from pptx.dml.color import RGBColor
 import sys
 import platform
 import time
+import re
 
-from .models import Scanner, Event, EventParticipant
+from .models import Scanner, Event, EventParticipant, PurgeSettings, NotificationLog
 
 # Проверка доступа (только тимлидеры и админы)
 def is_team_leader_or_admin(user):
@@ -46,6 +47,13 @@ def is_team_leader_or_admin(user):
 
 def team_leader_required(view_func):
     return user_passes_test(is_team_leader_or_admin)(view_func)
+
+# Проверка прав администратора
+def is_admin(user):
+    return user.is_authenticated and user.is_staff
+
+def admin_required(view_func):
+    return user_passes_test(is_admin)(view_func)
 
 # Авторизация
 def login_request(request):
@@ -1695,3 +1703,318 @@ def clear_scanners_cache():
     """Очищает все кеши, связанные со сканерами"""
     # Очищаем кеш по префиксу
     cache.clear()
+
+@team_leader_required
+def purge_settings(request):
+    """Страница настроек автоматического удаления мероприятий"""
+    purge_config, created = PurgeSettings.objects.get_or_create(
+        defaults={
+            'purge_date': timezone.datetime(timezone.now().year, 9, 1).date(),
+            'notification_days_before': 7,
+            'active': True,
+            'updated_by': request.user
+        }
+    )
+    
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        
+        # Обновление настроек
+        if action == 'update':
+            try:
+                # Получаем и валидируем дату удаления
+                purge_month = int(request.POST.get('purge_month', 9))
+                purge_day = int(request.POST.get('purge_day', 1))
+                
+                # Проверяем валидность даты
+                if purge_month < 1 or purge_month > 12 or purge_day < 1 or purge_day > 31:
+                    messages.error(request, 'Некорректная дата удаления')
+                    return redirect('purge_settings')
+                
+                # Создаем дату удаления
+                purge_date = timezone.datetime(timezone.now().year, purge_month, purge_day).date()
+                
+                # Получаем и валидируем дни для уведомлений
+                notification_days = int(request.POST.get('notification_days', 7))
+                if notification_days < 1 or notification_days > 30:
+                    messages.error(request, 'Количество дней для уведомления должно быть от 1 до 30')
+                    return redirect('purge_settings')
+                
+                # Получаем статус активности
+                active = request.POST.get('active') == 'on'
+                
+                # Обновляем настройки
+                purge_config.purge_date = purge_date
+                purge_config.notification_days_before = notification_days
+                purge_config.active = active
+                purge_config.updated_by = request.user
+                purge_config.updated_at = timezone.now()
+                purge_config.save()
+                
+                messages.success(request, 'Настройки успешно обновлены')
+            except Exception as e:
+                messages.error(request, f'Ошибка при обновлении настроек: {str(e)}')
+        
+        return redirect('purge_settings')
+    
+    # Рассчитываем дату следующего удаления
+    current_date = timezone.now().date()
+    purge_month_day = purge_config.purge_date.strftime('%m-%d')
+    next_purge_year = current_date.year
+    
+    # Если текущая дата после даты удаления в этом году, то следующее удаление в следующем году
+    next_purge_date_str = f"{next_purge_year}-{purge_month_day}"
+    next_purge_date = datetime.strptime(next_purge_date_str, '%Y-%m-%d').date()
+    
+    if current_date > next_purge_date:
+        next_purge_year += 1
+        next_purge_date_str = f"{next_purge_year}-{purge_month_day}"
+        next_purge_date = datetime.strptime(next_purge_date_str, '%Y-%m-%d').date()
+    
+    # Рассчитываем дату уведомления
+    notification_date = next_purge_date - timedelta(days=purge_config.notification_days_before)
+    
+    # Получаем количество мероприятий, которые будут удалены
+    one_year_ago = current_date - timedelta(days=365)
+    events_to_delete_count = Event.objects.filter(date__lt=one_year_ago).count()
+    
+    # Получаем последние логи уведомлений
+    recent_logs = NotificationLog.objects.filter(is_test=False).order_by('-sent_at')[:5]
+    
+    return render(request, 'core/purge_settings.html', {
+        'settings': purge_config,
+        'next_purge_date': next_purge_date,
+        'notification_date': notification_date,
+        'events_to_delete_count': events_to_delete_count,
+        'recent_logs': recent_logs
+    })
+
+@admin_required
+def notification_logs(request):
+    """Страница с логами отправленных уведомлений"""
+    logs = NotificationLog.objects.all()
+    
+    # Фильтрация по типу (тестовое/системное)
+    is_test = request.GET.get('is_test')
+    if is_test == 'true':
+        logs = logs.filter(is_test=True)
+    elif is_test == 'false':
+        logs = logs.filter(is_test=False)
+    
+    # Фильтрация по способу доставки (email/telegram)
+    notification_type = request.GET.get('notification_type')
+    if notification_type:
+        logs = logs.filter(notification_type=notification_type)
+    
+    # Поиск по получателю (email или telegram_id)
+    recipient = request.GET.get('recipient', '').strip()
+    if recipient:
+        logs = logs.filter(
+            Q(recipient_email__icontains=recipient) | 
+            Q(recipient_telegram_id__icontains=recipient)
+        )
+    
+    # Пагинация
+    paginator = Paginator(logs, 20)
+    page_number = request.GET.get('page')
+    page_obj = paginator.get_page(page_number)
+    
+    context = {
+        'logs': page_obj.object_list,
+        'page_obj': page_obj,
+        'is_test': is_test,
+        'recipient': recipient,
+        'notification_type': notification_type
+    }
+    
+    return render(request, 'core/notification_logs.html', context)
+
+# Обновление команды для включения пользовательских настроек
+def update_purge_command():
+    """Обновляет команду purge_events с учетом пользовательских настроек"""
+    try:
+        purge_config = PurgeSettings.objects.first()
+        if not purge_config:
+            return
+        
+        # Обновляем даты в скрипте schedule_tasks.py
+        with open('schedule_tasks.py', 'r') as f:
+            content = f.read()
+        
+        # Получаем месяц и день из настроек
+        month = purge_config.purge_date.month
+        day = purge_config.purge_date.day
+        
+        # Заменяем дату в скрипте
+        next_year = timezone.now().year + 1
+        updated_content = re.sub(
+            r'start_date = datetime\(\d+, \d+, \d+, \d+, \d+, \d+\)',
+            f'start_date = datetime({next_year}, {month}, {day}, 2, 0, 0)',
+            content
+        )
+        
+        with open('schedule_tasks.py', 'w') as f:
+            f.write(updated_content)
+        
+        return True
+    except Exception as e:
+        print(f"Ошибка при обновлении команды: {e}")
+        return False
+
+@team_leader_required
+def send_test_notification(request):
+    """Отдельная страница для отправки тестовых уведомлений"""
+    if request.method == 'POST':
+        # Получаем настройки удаления
+        purge_settings, created = PurgeSettings.objects.get_or_create(
+            defaults={
+                'purge_date': timezone.datetime(timezone.now().year, 7, 13).date(),  # 13 июля
+                'notification_days_before': 7,
+                'active': True,
+                'updated_by': request.user
+            }
+        )
+        
+        # Рассчитываем дату следующего удаления
+        current_date = timezone.now().date()
+        purge_month_day = purge_settings.purge_date.strftime('%m-%d')
+        next_purge_year = current_date.year
+        
+        # Если текущая дата после даты удаления в этом году, то следующее удаление в следующем году
+        next_purge_date_str = f"{next_purge_year}-{purge_month_day}"
+        next_purge_date = datetime.strptime(next_purge_date_str, '%Y-%m-%d').date()
+        
+        if current_date > next_purge_date:
+            next_purge_year += 1
+            next_purge_date_str = f"{next_purge_year}-{purge_month_day}"
+            next_purge_date = datetime.strptime(next_purge_date_str, '%Y-%m-%d').date()
+        
+        # Проверяем, какой тип уведомления выбран
+        notification_type = request.POST.get('notification_type', 'telegram')
+        
+        # Проверяем, есть ли указанный получатель для тестирования
+        test_recipient = request.POST.get('test_recipient', '').strip()
+        
+        # Получаем всех тимлидеров или конкретного получателя
+        if test_recipient:
+            # Отправляем одному указанному адресату
+            if notification_type == 'email':
+                recipients = [{'email': test_recipient, 'name': 'Тимлидер'}]
+            else:
+                recipients = [{'telegram_id': test_recipient, 'name': 'Тимлидер'}]
+        else:
+            # Отправляем всем тимлидерам
+            team_leaders = User.objects.filter(groups__name='Тимлидеры')
+            
+            if not team_leaders.exists():
+                messages.warning(request, 'Нет тимлидеров для отправки уведомлений')
+                return redirect('send_test_notification')
+            
+            recipients = []
+            for leader in team_leaders:
+                recipient_data = {
+                    'name': f"{leader.first_name} {leader.last_name}"
+                }
+                
+                # Ищем Telegram ID для тимлидера
+                if notification_type == 'telegram':
+                    try:
+                        team_leader = TeamLeader.objects.filter(
+                            first_name=leader.first_name,
+                            last_name=leader.last_name
+                        ).first()
+                        if team_leader and team_leader.telegram_id:
+                            recipient_data['telegram_id'] = team_leader.telegram_id
+                            recipients.append(recipient_data)
+                    except Exception as e:
+                        messages.error(request, f'Ошибка при поиске Telegram ID для {recipient_data["name"]}: {str(e)}')
+                else:
+                    if leader.email:
+                        recipient_data['email'] = leader.email
+                        recipients.append(recipient_data)
+        
+        # Проверяем, есть ли получатели
+        if not recipients:
+            if notification_type == 'telegram':
+                messages.error(request, 'Не найдены Telegram ID для отправки уведомлений')
+            else:
+                messages.error(request, 'Не найдены email-адреса для отправки уведомлений')
+            return redirect('send_test_notification')
+        
+        sent_count = 0
+        from core.utils import send_telegram_message
+        
+        for recipient in recipients:
+            # Формируем текст тестового уведомления
+            message = f"""
+            Здравствуйте, {recipient['name']}!
+
+            Это тестовое уведомление системы автоматического удаления мероприятий.
+            
+            Следующее удаление мероприятий запланировано на {next_purge_date.strftime('%d.%m.%Y')}.
+            Будут удалены мероприятия старше одного года.
+            
+            Это сообщение отправлено администратором {request.user.first_name} {request.user.last_name} для проверки работы системы уведомлений.
+
+            С уважением,
+            Команда Ticketon
+            """
+            
+            # Отправляем уведомление
+            try:
+                if notification_type == 'telegram' and 'telegram_id' in recipient:
+                    # Отправляем через Telegram
+                    success = send_telegram_message(message, [recipient['telegram_id']])
+                    
+                    if success:
+                        # Логируем отправку
+                        NotificationLog.objects.create(
+                            sent_by=request.user,
+                            recipient_telegram_id=recipient['telegram_id'],
+                            message=message,
+                            is_test=True,
+                            notification_type='telegram'
+                        )
+                        
+                        sent_count += 1
+                    else:
+                        messages.error(request, f'Не удалось отправить уведомление в Telegram для {recipient["name"]}')
+                
+                elif notification_type == 'email' and 'email' in recipient:
+                    # Отправляем через email
+                    send_mail(
+                        subject='Тестовое уведомление: система удаления мероприятий',
+                        message=message,
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        recipient_list=[recipient['email']],
+                        fail_silently=False,
+                    )
+                    
+                    # Логируем отправку
+                    NotificationLog.objects.create(
+                        sent_by=request.user,
+                        recipient_email=recipient['email'],
+                        message=message,
+                        is_test=True,
+                        notification_type='email'
+                    )
+                    
+                    sent_count += 1
+            except Exception as e:
+                recipient_id = recipient.get('telegram_id', recipient.get('email', 'неизвестный получатель'))
+                messages.error(request, f'Ошибка при отправке уведомления на {recipient_id}: {str(e)}')
+        
+        if sent_count > 0:
+            if test_recipient:
+                messages.success(request, f'Тестовое уведомление отправлено на {test_recipient}')
+            else:
+                messages.success(request, f'Тестовые уведомления отправлены {sent_count} тимлидерам')
+        
+        return redirect('events')
+    
+    # Получаем последние отправленные уведомления
+    recent_notifications = NotificationLog.objects.filter(is_test=True)[:5]
+    
+    return render(request, 'core/send_test_notification.html', {
+        'recent_notifications': recent_notifications
+    })

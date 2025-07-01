@@ -26,6 +26,11 @@ urlpatterns = [
     # Список сканеров
     path('scanners/', views.all_scanners_list, name='all_scanners_list'),
     
+    # Настройки автоматического удаления мероприятий
+    path('system/purge-settings/', views.purge_settings, name='purge_settings'),
+    path('system/notification-logs/', views.notification_logs, name='notification_logs'),
+    path('system/test-notification/', views.send_test_notification, name='send_test_notification'),
+    
     # Диагностика шаблона
     path('debug/template/', views.debug_template, name='debug_template'),
 ] 

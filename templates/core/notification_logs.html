@@ -1,0 +1,198 @@
+{% extends 'base.html' %}
+
+{% block title %}Журнал уведомлений{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1 class="mb-4">Журнал уведомлений системы</h1>
+    
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Фильтры</h5>
+                </div>
+                <div class="card-body">
+                    <form method="get" class="row g-3">
+                        <div class="col-md-3">
+                            <label for="recipient" class="form-label">Получатель:</label>
+                            <input type="text" class="form-control" id="recipient" name="recipient" 
+                                  value="{{ recipient|default:'' }}" placeholder="Email или Telegram ID">
+                        </div>
+                        
+                        <div class="col-md-3">
+                            <label for="is_test" class="form-label">Тип уведомления:</label>
+                            <select class="form-select" id="is_test" name="is_test">
+                                <option value="">Все уведомления</option>
+                                <option value="true" {% if is_test == 'true' %}selected{% endif %}>Тестовые</option>
+                                <option value="false" {% if is_test == 'false' %}selected{% endif %}>Системные</option>
+                            </select>
+                        </div>
+                        
+                        <div class="col-md-3">
+                            <label for="notification_type" class="form-label">Способ доставки:</label>
+                            <select class="form-select" id="notification_type" name="notification_type">
+                                <option value="">Все способы</option>
+                                <option value="email" {% if notification_type == 'email' %}selected{% endif %}>Email</option>
+                                <option value="telegram" {% if notification_type == 'telegram' %}selected{% endif %}>Telegram</option>
+                            </select>
+                        </div>
+                        
+                        <div class="col-md-3 d-flex align-items-end">
+                            <button type="submit" class="btn btn-primary me-2">Применить фильтры</button>
+                            <a href="{% url 'notification_logs' %}" class="btn btn-outline-secondary">Сбросить</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Список уведомлений</h5>
+                    <a href="{% url 'purge_settings' %}" class="btn btn-sm btn-light">Вернуться к настройкам</a>
+                </div>
+                <div class="card-body">
+                    {% if logs %}
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Дата отправки</th>
+                                    <th>Получатель</th>
+                                    <th>Отправитель</th>
+                                    <th>Тип</th>
+                                    <th>Способ</th>
+                                    <th>Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for log in logs %}
+                                <tr>
+                                    <td>{{ log.sent_at|date:"d.m.Y H:i:s" }}</td>
+                                    <td>
+                                        {% if log.notification_type == 'telegram' %}
+                                            <i class="fas fa-paper-plane me-1"></i> {{ log.recipient_telegram_id }}
+                                        {% else %}
+                                            <i class="fas fa-envelope me-1"></i> {{ log.recipient_email }}
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if log.sent_by %}
+                                            {{ log.sent_by.first_name }} {{ log.sent_by.last_name }}
+                                        {% else %}
+                                            Система
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if log.is_test %}
+                                            <span class="badge bg-info">Тестовое</span>
+                                        {% else %}
+                                            <span class="badge bg-success">Системное</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if log.notification_type == 'telegram' %}
+                                            <span class="badge bg-primary">Telegram</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">Email</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <button type="button" class="btn btn-sm btn-outline-primary view-message" 
+                                                data-bs-toggle="modal" data-bs-target="#messageModal"
+                                                data-message="{{ log.message }}">
+                                            Просмотр
+                                        </button>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- Пагинация -->
+                    {% if page_obj.has_other_pages %}
+                    <nav aria-label="Page navigation" class="mt-4">
+                        <ul class="pagination justify-content-center">
+                            {% if page_obj.has_previous %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page=1{% if recipient %}&recipient={{ recipient }}{% endif %}{% if is_test %}&is_test={{ is_test }}{% endif %}{% if notification_type %}&notification_type={{ notification_type }}{% endif %}">&laquo; Первая</a>
+                            </li>
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if recipient %}&recipient={{ recipient }}{% endif %}{% if is_test %}&is_test={{ is_test }}{% endif %}{% if notification_type %}&notification_type={{ notification_type }}{% endif %}">Предыдущая</a>
+                            </li>
+                            {% endif %}
+                            
+                            {% for i in page_obj.paginator.page_range %}
+                                {% if page_obj.number == i %}
+                                <li class="page-item active">
+                                    <span class="page-link">{{ i }}</span>
+                                </li>
+                                {% elif i > page_obj.number|add:'-3' and i < page_obj.number|add:'3' %}
+                                <li class="page-item">
+                                    <a class="page-link" href="?page={{ i }}{% if recipient %}&recipient={{ recipient }}{% endif %}{% if is_test %}&is_test={{ is_test }}{% endif %}{% if notification_type %}&notification_type={{ notification_type }}{% endif %}">{{ i }}</a>
+                                </li>
+                                {% endif %}
+                            {% endfor %}
+                            
+                            {% if page_obj.has_next %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if recipient %}&recipient={{ recipient }}{% endif %}{% if is_test %}&is_test={{ is_test }}{% endif %}{% if notification_type %}&notification_type={{ notification_type }}{% endif %}">Следующая</a>
+                            </li>
+                            <li class="page-item">
+                                <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}{% if recipient %}&recipient={{ recipient }}{% endif %}{% if is_test %}&is_test={{ is_test }}{% endif %}{% if notification_type %}&notification_type={{ notification_type }}{% endif %}">Последняя &raquo;</a>
+                            </li>
+                            {% endif %}
+                        </ul>
+                    </nav>
+                    {% endif %}
+                    
+                    {% else %}
+                    <div class="alert alert-info">
+                        Нет уведомлений, соответствующих указанным критериям
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно для просмотра текста сообщения -->
+<div class="modal fade" id="messageModal" tabindex="-1" aria-labelledby="messageModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="messageModalLabel">Текст уведомления</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <pre id="messageText" class="p-3 bg-light" style="white-space: pre-wrap;"></pre>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Обработка клика по кнопке просмотра сообщения
+        const viewButtons = document.querySelectorAll('.view-message');
+        viewButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const message = this.getAttribute('data-message');
+                document.getElementById('messageText').textContent = message;
+            });
+        });
+    });
+</script>
+{% endblock %}
+
+{% endblock %} 
