@@ -1521,7 +1521,7 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
     for i, line in enumerate(gratitude_lines):
         draw.text((grat_x, grat_y + i * int(24 * scale)), line, font=gratitude_font, fill=(255,255,255,255))
 
-    # Часы правее и больше, Cooper Hewitt Bold
+    # Часы правее и больше, Cooper Hewitt Bold работаеееет
     hours_text = f"{int(round(hours))} hours"
     try:
         cooper_hewitt_bold_path = os.path.join(base_dir, 'static', 'fonts', 'cooperhewitt-bold.ttf')
