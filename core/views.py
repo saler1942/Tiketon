@@ -37,6 +37,7 @@ from pptx.dml.color import RGBColor
 import sys
 import platform
 import time
+from functools import wraps
 
 from .models import Scanner, Event, EventParticipant
 
@@ -45,7 +46,12 @@ def is_team_leader_or_admin(user):
     return user.is_authenticated and (user.is_team_leader or user.is_staff)
 
 def team_leader_required(view_func):
-    return user_passes_test(is_team_leader_or_admin)(view_func)
+    @wraps(view_func)
+    def _wrapped_view(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return redirect('home')
+        return user_passes_test(is_team_leader_or_admin)(view_func)(request, *args, **kwargs)
+    return _wrapped_view
 
 # Авторизация
 def login_request(request):
@@ -168,18 +174,56 @@ def event_edit(request, event_id):
                 # Проверяем, есть ли строка с именами для поиска
                 volunteer_names = request.POST.get('volunteer_names', '').strip()
                 if volunteer_names:
-                    # Разбиваем строку на имена и ищем сканеров
-                    names = volunteer_names.split()
-                    if names:
-                        # Создаем запрос для поиска сканеров по именам
-                        query = Q()
-                        for name in names:
-                            if name:
-                                query |= Q(first_name__icontains=name) | Q(last_name__icontains=name)
+                    # Разделяем ввод на отдельных людей (по запятой или новой строке)
+                    people = []
+                    for line in volunteer_names.split('\n'):
+                        people.extend([p.strip() for p in line.split(',') if p.strip()])
+                    
+                    # Для каждого человека ищем соответствующих сканеров
+                    for person in people:
+                        # Разбиваем на слова (имя и фамилию)
+                        name_parts = person.split()
                         
-                        # Получаем ID найденных сканеров
-                        found_scanners = Scanner.objects.filter(query).values_list('id', flat=True)
-                        volunteer_ids.extend([str(id) for id in found_scanners])
+                        if len(name_parts) >= 2:
+                            # Если два слова, пробуем найти как одного человека (имя + фамилия)
+                            # Вариант 1: первое слово - фамилия, второе - имя
+                            last_name1 = name_parts[0]
+                            first_name1 = name_parts[1]
+                            exact_match1 = Scanner.objects.filter(
+                                first_name__icontains=first_name1,
+                                last_name__icontains=last_name1
+                            )
+                            
+                            # Вариант 2: первое слово - имя, второе - фамилия
+                            first_name2 = name_parts[0]
+                            last_name2 = name_parts[1]
+                            exact_match2 = Scanner.objects.filter(
+                                first_name__icontains=first_name2,
+                                last_name__icontains=last_name2
+                            )
+                            
+                            # Если нашли точное совпадение в любом варианте
+                            exact_match = list(exact_match1) + list(exact_match2)
+                            if exact_match:
+                                # Используем только точные совпадения
+                                found_ids = [str(scanner.id) for scanner in exact_match]
+                                volunteer_ids.extend(found_ids)
+                            else:
+                                # Если точного совпадения нет, ищем каждое слово отдельно
+                                query = Q()
+                                for name in name_parts:
+                                    if name:
+                                        query |= Q(first_name__icontains=name) | Q(last_name__icontains=name)
+                                
+                                found_ids = [str(id) for id in Scanner.objects.filter(query).values_list('id', flat=True)]
+                                volunteer_ids.extend(found_ids)
+                        elif name_parts:
+                            # Если только одно слово, ищем по имени ИЛИ фамилии
+                            name = name_parts[0]
+                            found_ids = [str(id) for id in Scanner.objects.filter(
+                                Q(first_name__icontains=name) | Q(last_name__icontains=name)
+                            ).values_list('id', flat=True)]
+                            volunteer_ids.extend(found_ids)
                 
                 # Убираем дубликаты
                 volunteer_ids = list(set(volunteer_ids))
@@ -687,7 +731,7 @@ def convert_pptx_to_png(pptx_path):
         total_h = hh + gap + hlh
         base_y = center_y - total_h // 2 - 10 * scale
         hours_x = margin + (section_w - hw) // 2
-        hours_y = base_y
+        hours_y = name_y + name_h + 160 * scale
         adraw.text((hours_x, hours_y), hours_text, font=impact_25, fill=(255,255,255,255))
         line_y = hours_y + hh + gap
         line_x1 = margin + (section_w - line_w) // 2
@@ -929,6 +973,9 @@ def generate_certificate(request, participant_id):
         event_date = event.date.strftime("%d.%m.%Y")
         leader_name = f"{event.created_by.first_name} {event.created_by.last_name}" if event.created_by else None
         file_data = create_certificate_pdf(full_name, hours, event_name, event_date, leader_name)
+        if file_data is None:
+            from django.shortcuts import redirect
+            return redirect('home')
         participant.hours_awarded = 0
         participant.save()
         filename = f"certificate_{scanner.last_name}_{event.name}.pdf"
@@ -973,6 +1020,9 @@ def generate_all_certificates(request, event_id):
                     event_date=event_date,
                     leader_name=leader_name
                 )
+                if pdf_data is None:
+                    from django.shortcuts import redirect
+                    return redirect('home')
                 
                 # Обнуляем часы сканера при получении сертификата
                 participant.hours_awarded = 0
@@ -1036,6 +1086,9 @@ def generate_scanner_certificate(request, scanner_id):
         
         # Создаем сертификат
         file_data = create_certificate_pdf(full_name, hours, period=period_text, events_list=events_list)
+        if file_data is None:
+            from django.shortcuts import redirect
+            return redirect('home')
         
         # Обнуляем часы сканера при получении сертификата
         for participant in participations:
@@ -1110,6 +1163,9 @@ def generate_all_scanner_certificates(request):
                     period=period_text,
                     events_list=events_list
                 )
+                if pdf_data is None:
+                    from django.shortcuts import redirect
+                    return redirect('home')
                 
                 # Обнуляем часы сканера при получении сертификата
                 for p in participations:
@@ -1131,6 +1187,9 @@ def generate_all_scanner_certificates(request):
         return response
         
     except Exception as e:
+        import traceback
+        print(f"Ошибка при генерации сертификатов: {e}")
+        print(traceback.format_exc())
         return JsonResponse({"error": str(e)}, status=400)
 
 @team_leader_required
@@ -1331,99 +1390,91 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
 
     base_dir = settings.BASE_DIR
     bg_path = os.path.join(base_dir, 'static', 'templates', 'background.png')
-    logo_path = os.path.join(base_dir, 'static', 'templates', 'image.png')
-    stamp_path = os.path.join(base_dir, 'static', 'templates', 'stamp.png')
-    impact_path = os.path.join(base_dir, 'static', 'fonts', 'IMPACT.TTF')
-    sans_italic = os.path.join(base_dir, 'static', 'fonts', 'OpenSans-Italic.ttf')
-    sans_bold_italic = os.path.join(base_dir, 'static', 'fonts', 'OpenSans-BoldItalic.ttf')
+    big_shoulders_path = os.path.join(base_dir, 'static', 'fonts', 'BigShouldersDisplay-Bold.ttf')
+    pinyon_script_path = os.path.join(base_dir, 'static', 'fonts', 'PinyonScript-Regular.ttf')
+    cooper_hewitt_path = os.path.join(base_dir, 'static', 'fonts', 'CooperHewitt-Regular.ttf')
 
-    # Увеличиваем разрешение для максимального качества
     scale = 2
     width, height = 1123 * scale, 794 * scale
-    
-    # Создаем полностью черный фон как базовый слой
+
     img = PILImage.new('RGB', (width, height), (0, 0, 0))
-    
-    # Загружаем и накладываем основной фон
-    bg = PILImage.open(bg_path).convert('RGBA').resize((width, height))
-    img.paste(bg, (0, 0), bg)
-    
-    # Создаем полупрозрачный черный слой вместо использования back_black.png
-    # Создаем новое RGBA изображение с черным цветом и прозрачностью 60%
-    overlay = PILImage.new('RGBA', (width, height), (0, 0, 0, 153))  # 153 = 60% непрозрачности
-    
-    # Накладываем полупрозрачный черный слой поверх основного фона
-    img.paste((0, 0, 0), (0, 0, width, height), overlay)
-    
+    try:
+        bg = PILImage.open(bg_path).convert('RGBA').resize((width, height))
+        img.paste(bg, (0, 0), bg)
+    except Exception as e:
+        print(f"Ошибка при загрузке фона: {e}")
+
     draw = ImageDraw.Draw(img)
 
-    # Логотип в левый нижний угол (logo_scale = 0.9)
-    logo = PILImage.open(logo_path).convert('RGBA')
-    logo_w, logo_h = logo.size
-    logo_scale = 0.9
-    logo = logo.resize((int(logo_w * logo_scale), int(logo_h * logo_scale)), PILImage.LANCZOS)
-    img.paste(logo, (40 * scale, height - logo.height - 40 * scale), logo)
-
-    # Шрифты
-    impact = ImageFont.truetype(impact_path, size=98)
-    impact_name = ImageFont.truetype(impact_path, size=128)
-    sans_bold_italic_f = ImageFont.truetype(sans_bold_italic, size=24)
-    sans_italic_f = ImageFont.truetype(sans_italic, size=18)
-    sans_italic_f_small = ImageFont.truetype(sans_italic, size=16)
-    sans_bold_italic_f_small = ImageFont.truetype(sans_bold_italic, size=18)
+    def safe_font(path, size):
+        try:
+            return ImageFont.truetype(path, size=size)
+        except:
+            return ImageFont.load_default()
 
     def get_text_size(text, font):
         bbox = font.getbbox(text)
         return bbox[2] - bbox[0], bbox[3] - bbox[1]
 
-    # CERTIFICAT
-    cert_text = "CERTIFICAT"
-    impact_cert = ImageFont.truetype(impact_path, size=int(98.3 * scale))
-    cert_w, cert_h = get_text_size(cert_text, impact_cert)
-    cert_x = (width - cert_w - 80 * scale)
-    cert_y = 70 * scale
-    draw.text((cert_x, cert_y), cert_text, font=impact_cert, fill=(255,255,255,255))
+    arial = safe_font("C:/Windows/Fonts/arial.ttf", 48 * scale)
+    arial_bold = safe_font("C:/Windows/Fonts/arialbd.ttf", 48 * scale)
+    arial_italic = safe_font("C:/Windows/Fonts/ariali.ttf", 48 * scale)
+    arial_bold_big = safe_font("C:/Windows/Fonts/arialbd.ttf", 110 * scale)
+    arial_italic_big = safe_font("C:/Windows/Fonts/ariali.ttf", 90 * scale)
+    arial_regular = safe_font("C:/Windows/Fonts/arial.ttf", 32 * scale)
+    arial_small = safe_font("C:/Windows/Fonts/arial.ttf", 24 * scale)
+    arial_bold_small = safe_font("C:/Windows/Fonts/arialbd.ttf", 32 * scale)
+    arial_italic_small = safe_font("C:/Windows/Fonts/ariali.ttf", 32 * scale)
 
-    # OF APPRECIATION
-    app_text = "OF APPRECIATION"
-    app_font = ImageFont.truetype(sans_bold_italic, size=24 * scale)
-    app_w, app_h = get_text_size(app_text, app_font)
-    app_x = (width - app_w - 85 * scale)
-    app_y = cert_y + cert_h + 40 * scale
-    draw.text((app_x, app_y), app_text, font=app_font, fill=(255,255,255,255))
+    # Certificate (Big Shoulders Display Bold)
+    try:
+        big_shoulders = ImageFont.truetype(big_shoulders_path, 150 * scale)
+    except:
+        big_shoulders = safe_font("C:/Windows/Fonts/arialbd.ttf", 150 * scale)
+    cert_text = "Certificate"
+    cert_w, cert_h = get_text_size(cert_text, big_shoulders)
+    cert_x = 80 * scale
+    cert_y = 30 * scale
+    draw.text((cert_x, cert_y), cert_text, font=big_shoulders, fill=(255,255,255,255))
 
-    # This certificate is presented to:
+    # of appreciation (Pinyon Script)
+    try:
+        pinyon_script = ImageFont.truetype(pinyon_script_path, 60 * scale)
+    except:
+        pinyon_script = safe_font("C:/Windows/Fonts/ariali.ttf", 60 * scale)
+    appr_text = "of appreciation"
+    appr_w, appr_h = get_text_size(appr_text, pinyon_script)
+    appr_x = cert_x  # align left
+    appr_y = cert_y + cert_h + 40 * scale  # move even lower
+    draw.text((appr_x, appr_y), appr_text, font=pinyon_script, fill=(255,255,255,255))
+
     pres_text = "This certificate is presented to:"
-    pres_font = ImageFont.truetype(sans_italic, size=18 * scale)
-    pres_w, pres_h = get_text_size(pres_text, pres_font)
-    pres_x = (width - pres_w - 120 * scale)
-    pres_y = app_y + app_h + 40 * scale
-    draw.text((pres_x, pres_y), pres_text, font=pres_font, fill=(255,255,255,255))
+    pres_w, pres_h = get_text_size(pres_text, arial_bold_small)
+    pres_x = cert_x
+    pres_y = appr_y + appr_h + 30 * scale
+    draw.text((pres_x, pres_y), pres_text, font=arial_bold_small, fill=(255,255,255,255))
 
-    # NAME
-    name_text = name
-    name_w, name_h = get_text_size(name_text, impact_name)
-    name_x = (width - name_w - 120 * scale)
+    # Имя и фамилия (Pinyon Script)
+    def capitalize_name(name):
+        return ' '.join([part.capitalize() for part in name.split()])
+
+    name_text = capitalize_name(name)
+    name_w, name_h = get_text_size(name_text, pinyon_script)
+    name_x = cert_x
     name_y = pres_y + pres_h + 10 * scale
-    draw.text((name_x, name_y), name_text, font=impact_name, fill=(76,175,80,255))
+    draw.text((name_x, name_y), name_text, font=pinyon_script, fill=(255,255,255,255))
 
-    # Определяем годы для текста благодарности
-    years_text = "2024 and 2025"  # По умолчанию
-    
-    # Если есть список мероприятий, извлекаем годы из них
+    years_text = ""
     if events_list:
         years = set()
         for event in events_list:
             if 'date' in event:
                 try:
-                    # Извлекаем год из даты в формате DD.MM.YYYY
                     date_parts = event['date'].split('.')
                     if len(date_parts) == 3:
-                        years.add(date_parts[2])  # Год - последняя часть
+                        years.add(date_parts[2])
                 except:
                     pass
-        
-        # Если нашли годы, формируем строку
         if years:
             sorted_years = sorted(years)
             if len(sorted_years) == 1:
@@ -1431,29 +1482,21 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
             elif len(sorted_years) == 2:
                 years_text = f"{sorted_years[0]} and {sorted_years[1]}"
             else:
-                # Для трех и более лет используем перечисление с запятыми и "and" перед последним
                 years_text = ", ".join(sorted_years[:-1]) + " and " + sorted_years[-1]
-    
-    # Если передан период, извлекаем годы из него
     elif period:
         try:
-            # Предполагаем, что период имеет формат "DD.MM.YYYY - DD.MM.YYYY"
             period_parts = period.split(' - ')
             if len(period_parts) == 2:
                 start_year = period_parts[0].split('.')[-1]
                 end_year = period_parts[1].split('.')[-1]
-                
                 if start_year == end_year:
                     years_text = start_year
                 else:
                     years_text = f"{start_year} and {end_year}"
         except:
             pass
-    
-    # Если передана одиночная дата мероприятия
     elif event_date:
         try:
-            # Предполагаем формат даты "DD.MM.YYYY" или объект datetime
             if isinstance(event_date, str):
                 year = event_date.split('.')[-1]
                 years_text = year
@@ -1462,154 +1505,74 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
         except:
             pass
 
-    # Блок благодарности с динамическими годами
-    lines = [
-        "We, the Ticketon company, would like to sincerely express our gratitude and",
-        "appreciation towards your incredible work and support in organizing",
-        f"our events in {years_text}. You played important role in organization of",
-        "each event. We hope to see you again in upcoming events!"
+    try:
+        gratitude_font = ImageFont.truetype(cooper_hewitt_path, int(16 * scale))
+    except:
+        gratitude_font = safe_font("C:/Windows/Fonts/arial.ttf", int(16 * scale))
+
+    gratitude_lines = [
+        f"We, the Ticketon company, would like to sincerely express our gratitude and appreciation",
+        f"towards your incredible work and support in organizing our events in {years_text}.",
+        "You played important role in organization of each event.",
+        "We hope to see you again in upcoming events!"
     ]
-    main_font = ImageFont.truetype(sans_italic, size=16 * scale)
-    main_width = 600 * scale
-    main_x = width - main_width - 40 * scale
-    main_y = name_y + name_h + 40 * scale
-    line_h = main_font.getbbox('Ag')[3] - main_font.getbbox('Ag')[1] + 8 * scale
-    for i, line in enumerate(lines):
-        words = line.split()
-        if len(words) == 1:
-            draw.text((main_x, main_y + i * line_h), line, font=main_font, fill=(255,255,255,255))
-            continue
-        total_w = sum(get_text_size(w, main_font)[0] for w in words)
-        space_w = int((main_width - total_w) / max(1, (len(words) - 1) * 2))
-        x = main_x
-        for j, word in enumerate(words):
-            draw.text((x, main_y + i * line_h), word, font=main_font, fill=(255,255,255,255))
-            w, _ = get_text_size(word, main_font)
-            x += w + space_w
+    grat_x = cert_x
+    grat_y = name_y + name_h + 40 * scale
+    for i, line in enumerate(gratitude_lines):
+        draw.text((grat_x, grat_y + i * int(24 * scale)), line, font=gratitude_font, fill=(255,255,255,255))
 
-    # Рисуем стрелку с остриём только слева, справа — ровно
-    arrow_w, arrow_height = 540 * scale, 110 * scale
-    arrow = PILImage.new('RGBA', (arrow_w, arrow_height), (0,0,0,0))
-    adraw = ImageDraw.Draw(arrow)
-    points = [
-        (0, arrow_height//2), (40 * scale, 0), (arrow_w, 0), (arrow_w, arrow_height), (40 * scale, arrow_height)
-    ]
-    adraw.polygon(points, fill=(76,175,80,255))
+    # Часы правее и больше, Cooper Hewitt Bold
+    hours_text = f"{int(round(hours))} hours"
+    try:
+        cooper_hewitt_bold_path = os.path.join(base_dir, 'static', 'fonts', 'cooperhewitt-bold.ttf')
+        hours_font = ImageFont.truetype(cooper_hewitt_bold_path, int(28 * scale))
+    except:
+        hours_font = safe_font("C:/Windows/Fonts/arialbd.ttf", int(28 * scale))
+    hours_w, hours_h = get_text_size(hours_text, hours_font)
+    hours_x = cert_x + 375 * scale  # намного левее
+    hours_y = name_y + name_h + 100 * scale  # еще ниже
+    draw.text((hours_x, hours_y), hours_text, font=hours_font, fill=(255,255,255,255))
 
-    margin = 18 * scale
-    gap = 14 * scale
-    gap_hours = 6 * scale
-    section_w = (arrow_w - 2 * margin - 2 * gap) // 3
-    center_y = arrow_height // 2
+    # Добавить штамп справа от часов, почти идеально круглый (растянуть совсем чуть-чуть)
+    try:
+        stamp_path = os.path.join(base_dir, 'static', 'templates', 'stamp.png')
+        if os.path.exists(stamp_path):
+            stamp_img = PILImage.open(stamp_path).convert('RGBA')
+            # Почти идеально круглый штамп: ширина чуть больше высоты
+            circle_diameter = 120 * scale
+            oval_width = int(circle_diameter * 1.03)  # растянуть совсем чуть-чуть
+            oval_height = circle_diameter
+            stamp_img = stamp_img.resize((oval_width, oval_height), PILImage.LANCZOS)
+            # Координаты овала чуть правее
+            stamp_x = hours_x + hours_w + 30 * scale  # правее
+            stamp_y = hours_y - 10 * scale
+            img.paste(stamp_img, (int(stamp_x), int(stamp_y)), stamp_img)
+    except Exception as e:
+        print(f"Ошибка при добавлении штампа: {e}")
 
-    # Шрифты для стрелки
-    impact_25 = ImageFont.truetype(impact_path, size=25 * scale)
-    impact_19_9 = ImageFont.truetype(impact_path, size=int(19.9 * scale))
-    impact_18 = ImageFont.truetype(impact_path, size=18 * scale)
-
-    # Левая секция: часы
-    hours_text = f"{int(round(hours)):02d}"
-    hw, hh = get_text_size(hours_text, impact_25)
-    hlabel = "hours"
-    hlw, hlh = get_text_size(hlabel, impact_18)
-    line_w = section_w * 0.8
-    total_h = hh + gap + hlh
-    base_y = center_y - total_h // 2 - 10 * scale
-    hours_x = margin + (section_w - hw) // 2
-    hours_y = base_y
-    adraw.text((hours_x, hours_y), hours_text, font=impact_25, fill=(255,255,255,255))
-    line_y = hours_y + hh + gap
-    line_x1 = margin + (section_w - line_w) // 2
-    line_x2 = line_x1 + line_w
-    adraw.line([(line_x1, line_y), (line_x2, line_y)], fill=(255,255,255,255), width=4 * scale)
-    hlabel_x = margin + (section_w - hlw) // 2
-    hlabel_y = line_y + gap_hours
-    adraw.text((hlabel_x, hlabel_y), hlabel, font=impact_18, fill=(255,255,255,255))
-
-    # Центральная секция: печать (штамп чуть выше, овальный)
-    if os.path.exists(stamp_path):
-        stamp = PILImage.open(stamp_path).convert('RGBA')
-        stamp_w = int(section_w)
-        stamp_h = int(arrow_height * 0.95)
-        stamp = stamp.resize((stamp_w, stamp_h), PILImage.LANCZOS)
-        stamp_x = margin + section_w + gap
-        stamp_y = center_y - stamp_h // 2
-        arrow.paste(stamp, (stamp_x, stamp_y), stamp)
-
-    # Правая секция: крупный текст, увеличиваем размер имени директора и слова "director"
-    sign_text = "Torgunakova V. K."
-    dir_text = "director"
-    max_width = section_w - 2 * int(5 * scale)  # Уменьшаем внутренний отступ для большего текста
-    
-    # Увеличиваем базовый размер шрифта для имени директора и слова "director"
-    base_sign_font_size = int(25 * 1.5 * scale)  # Было 20.9 * 1.5
-    base_dir_font_size = int(22 * 1.5 * scale)   # Было 19 * 1.5
-    
-    min_font_size = int(15 * scale)  # Увеличиваем минимальный размер шрифта
-    sign_font_size = base_sign_font_size
-    dir_font_size = base_dir_font_size
-    
-    while True:
-        sign_font = ImageFont.truetype(impact_path, size=sign_font_size)
-        dir_font = ImageFont.truetype(impact_path, size=dir_font_size)
-        sign_w, sign_h = get_text_size(sign_text, sign_font)
-        dir_w, dir_h = get_text_size(dir_text, dir_font)
-        if sign_w <= max_width and dir_w <= max_width:
-            break
-        sign_font_size -= 2
-        dir_font_size -= 2
-        if sign_font_size < min_font_size or dir_font_size < min_font_size:
-            sign_font_size = dir_font_size = min_font_size
-            sign_font = ImageFont.truetype(impact_path, size=sign_font_size)
-            dir_font = ImageFont.truetype(impact_path, size=dir_font_size)
-            sign_w, sign_h = get_text_size(sign_text, sign_font)
-            dir_w, dir_h = get_text_size(dir_text, dir_font)
-            break
-    
-    right_section_x = margin + 2 * section_w + 2 * gap
-    right_section_y = margin
-    sign_x = right_section_x + (section_w - sign_w) // 2
-    sign_y = right_section_y + 10 * scale
-    dir_x = right_section_x + (section_w - dir_w) // 2
-    dir_y = sign_y + sign_h + int(0.2 * sign_h)  # Уменьшаем расстояние между именем и должностью
-    
-    # Рисуем имя и должность директора
-    adraw.text((sign_x, sign_y), sign_text, font=sign_font, fill=(0,0,0,255))
-    adraw.text((dir_x, dir_y), dir_text, font=dir_font, fill=(255,255,255,255))
-
-    arrow_x = width - arrow_w
-    arrow_y = height - arrow_height - 60 * scale
-    img.paste(arrow, (arrow_x, arrow_y), arrow)
-
-    temp_dir = tempfile.mkdtemp()
-    temp_img_path = os.path.join(temp_dir, 'cert.png')
-    img.save(temp_img_path, 'PNG')
-
-    # Использование ReportLab для создания PDF без артефактов
-    pdf_width, pdf_height = 1123, 794  # Размеры PDF в точках
-    temp_pdf_path = os.path.join(temp_dir, 'certificate.pdf')
-    
-    # Создаем PDF с чистым черным фоном, без артефактов
-    c = canvas.Canvas(temp_pdf_path, pagesize=(pdf_width, pdf_height))
-    
-    # Заливаем весь PDF черным цветом (без границ)
-    c.setFillColor((0, 0, 0))
-    c.rect(0, 0, pdf_width, pdf_height, fill=1, stroke=0)
-    
-    # Добавляем изображение сертификата (без верхней черной линии)
-    c.drawImage(temp_img_path, 0, 0, width=pdf_width, height=pdf_height)
-    
-    c.save()
-
-    with open(temp_pdf_path, 'rb') as f:
-        pdf_data = f.read()
-    
-    # Очистка временных файлов
-    os.remove(temp_img_path)
-    os.remove(temp_pdf_path)
-    os.rmdir(temp_dir)
-    
-    return pdf_data
+    try:
+        temp_dir = tempfile.mkdtemp()
+        temp_img_path = os.path.join(temp_dir, 'cert.png')
+        img.save(temp_img_path, 'PNG')
+        pdf_width, pdf_height = 1123, 794
+        temp_pdf_path = os.path.join(temp_dir, 'certificate.pdf')
+        c = canvas.Canvas(temp_pdf_path, pagesize=(pdf_width, pdf_height))
+        c.drawImage(temp_img_path, 0, 0, width=pdf_width, height=pdf_height)
+        c.save()
+        with open(temp_pdf_path, 'rb') as f:
+            pdf_data = f.read()
+        try:
+            os.remove(temp_img_path)
+            os.remove(temp_pdf_path)
+            os.rmdir(temp_dir)
+        except:
+            pass
+        return pdf_data
+    except Exception as e:
+        import traceback
+        print(f"Ошибка при создании PDF: {e}")
+        print(traceback.format_exc())
+        return None
 
 def convert_pptx_to_pdf(pptx_path):
     """

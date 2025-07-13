@@ -62,14 +62,7 @@
                 <td>{{ scanner.total_hours }}</td>
                 <td>{{ scanner.total_hours|add:scanner.total_certificate_hours }}</td>
                 <td>
-                    <div class="dropdown d-inline-block">
-                        <button class="btn btn-success dropdown-toggle" type="button" id="certDropdown{{ scanner.id }}" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;">
-                            Сертификат
-                        </button>
-                        <div class="dropdown-menu" aria-labelledby="certDropdown{{ scanner.id }}">
-                            <a class="dropdown-item" href="#" onclick="downloadCertificate({{ scanner.id }}, this); return false;">PDF</a>
-                        </div>
-                    </div>
+                    <a href="/certificates/scanner/{{ scanner.id }}/?format=pdf" class="btn btn-success" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;">Сертификат</a>
                     <button onclick="toggleEvents({{ scanner.id }})" class="btn btn-secondary" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;">Мероприятия</button>
                 </td>
             </tr>
