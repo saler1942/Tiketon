@@ -62,6 +62,13 @@ class ScannerAdmin(admin.ModelAdmin):
     list_filter = ('first_name', 'last_name')
     search_fields = ('first_name', 'last_name', 'email')
     ordering = ('last_name', 'first_name')
+    fields = ('first_name', 'last_name', 'email', 'total_certificate_hours')
+    
+    def get_readonly_fields(self, request, obj=None):
+        # Делаем поле total_certificate_hours редактируемым для админов
+        if request.user.is_superuser:
+            return ()
+        return ('total_certificate_hours',)
 
 # Класс для админки мероприятий с фильтрацией и поиском
 class EventAdmin(admin.ModelAdmin):
@@ -75,11 +82,18 @@ class EventAdmin(admin.ModelAdmin):
 # Класс для админки участников с фильтрацией и поиском
 class EventParticipantAdmin(admin.ModelAdmin):
     list_display = [
-        'id', 'event', 'volunteer'
+        'id', 'event', 'volunteer', 'hours_awarded'
     ]
     list_filter = ['event']
     search_fields = ('event__name', 'volunteer__first_name', 'volunteer__last_name', 'volunteer__email')
     ordering = ('event', 'volunteer')
+    fields = ('event', 'volunteer', 'hours_awarded', 'hours_awarded_backup')
+    
+    def get_readonly_fields(self, request, obj=None):
+        # Делаем поля часов редактируемыми для админов
+        if request.user.is_superuser:
+            return ()
+        return ('hours_awarded', 'hours_awarded_backup')
 
 # Регистрируем остальные модели с кастомной админкой
 admin.site.register(Scanner, ScannerAdmin)

@@ -29,7 +29,7 @@ class TeamLeader(models.Model):
     def save(self, *args, **kwargs):
         # При сохранении тимлидера, проверяем наличие связанного сканера
         if not self.scanner:
-            # Ищем сканера с таким же именем и фамилией
+            # Ищем сканер с таким же именем и фамилией
             scanner = Scanner.objects.filter(
                 first_name=self.first_name,
                 last_name=self.last_name
@@ -78,6 +78,7 @@ class EventParticipant(models.Model):
     volunteer = models.ForeignKey(Scanner, on_delete=models.CASCADE)
     registered_at = models.DateTimeField(default=timezone.now)
     hours_awarded = models.FloatField(default=0.0)
+    hours_awarded_backup = models.FloatField(default=0.0)
     
     class Meta:
         unique_together = ('event', 'volunteer')

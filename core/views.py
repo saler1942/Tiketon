@@ -256,7 +256,7 @@ def event_edit(request, event_id):
                     messages.warning(request, f'{not_added_count} сканеров не были добавлены (уже участвуют или не найдены)')
                 
                 return redirect('event_edit', event_id=event.id)
-            if 'remove_participant' in request.POST and request.user.is_staff:
+            if 'remove_participant' in request.POST:
                 participant_id = request.POST.get('participant_id')
                 try:
                     participant = EventParticipant.objects.get(id=participant_id, event=event)
@@ -265,10 +265,10 @@ def event_edit(request, event_id):
                 except EventParticipant.DoesNotExist:
                     messages.error(request, 'Участник не найден')
                 return redirect('event_edit', event_id=event.id)
-            if 'save_participants' in request.POST and request.user.is_staff:
+            if 'save_participants' in request.POST:
                 messages.success(request, 'Изменения сохранены')
                 pass
-            if 'set_duration' in request.POST and request.user.is_staff:
+            if 'set_duration' in request.POST:
                 try:
                     duration_hours = float(request.POST.get('duration_hours', 0))
                     event.duration_hours = duration_hours
@@ -687,7 +687,7 @@ def convert_pptx_to_png(pptx_path):
         main_font = ImageFont.truetype(sans_italic, size=16 * scale)
         main_width = 600 * scale
         main_x = width - main_width - 40 * scale
-        main_y = name_y + name_h + 40 * scale
+        main_y = 750 * scale  # Фиксированная позиция, не зависящая от размера имени
         line_h = main_font.getbbox('Ag')[3] - main_font.getbbox('Ag')[1] + 8 * scale
         for i, line in enumerate(lines):
             words = line.split()
@@ -731,7 +731,7 @@ def convert_pptx_to_png(pptx_path):
         total_h = hh + gap + hlh
         base_y = center_y - total_h // 2 - 10 * scale
         hours_x = margin + (section_w - hw) // 2
-        hours_y = name_y + name_h + 160 * scale
+        hours_y = sign_y - 40 * scale  # Поднимаем часы выше имени директора
         adraw.text((hours_x, hours_y), hours_text, font=impact_25, fill=(255,255,255,255))
         line_y = hours_y + hh + gap
         line_x1 = margin + (section_w - line_w) // 2
@@ -741,14 +741,15 @@ def convert_pptx_to_png(pptx_path):
         hlabel_y = line_y + gap_hours
         adraw.text((hlabel_x, hlabel_y), hlabel, font=impact_18, fill=(255,255,255,255))
 
-        # Центральная секция: печать (штамп чуть выше, овальный)
+        # Центральная секция: печать (штамп точно на белом круге)
         if os.path.exists(stamp_path):
             stamp = PILImage.open(stamp_path).convert('RGBA')
-            stamp_w = int(section_w)
-            stamp_h = int(arrow_height * 0.95)
-            stamp = stamp.resize((stamp_w, stamp_h), PILImage.LANCZOS)
-            stamp_x = margin + section_w + gap
-            stamp_y = center_y - stamp_h // 2
+            # Делаем печать круглой и меньшего размера для точного позиционирования
+            stamp_size = int(section_w * 0.8)  # Уменьшаем размер для точного попадания в круг
+            stamp = stamp.resize((stamp_size, stamp_size), PILImage.LANCZOS)
+            # Позиционируем чуть правее центра секции (на белом круге)
+            stamp_x = margin + section_w + gap + (section_w - stamp_size) // 2 + 30 * scale
+            stamp_y = center_y - stamp_size // 2
             arrow.paste(stamp, (stamp_x, stamp_y), stamp)
 
         # Правая секция: крупный текст, увеличиваем размер имени директора и слова "director"
@@ -1056,48 +1057,30 @@ def generate_scanner_certificate(request, scanner_id):
         if not participations.exists():
             messages.error(request, "Сканер еще не участвовал на мероприятиях")
             return redirect('scanner_certificates')
-        
-        # Получаем текущие часы, доступные для сертификата
         current_hours = participations.aggregate(total_hours=Sum('hours_awarded', output_field=FloatField()))['total_hours'] or 0.0
-        
         if current_hours == 0:
             messages.error(request, "У сканера нет доступных часов для получения сертификата")
             return redirect('scanner_certificates')
-        
-        # Получаем диапазон дат мероприятий
         date_range = participations.aggregate(first_event=Min('event__date'), last_event=Max('event__date'))
         first_date = date_range['first_event']
         last_date = date_range['last_event']
         period_text = f"{first_date.strftime('%d.%m.%Y')} - {last_date.strftime('%d.%m.%Y')}"
-        
-        # Формируем список мероприятий для сертификата
         events_list = [{
             'name': p.event.name,
             'date': p.event.date.strftime("%d.%m.%Y"),
             'hours': p.hours_awarded
         } for p in participations]
-        
         full_name = f"{scanner.first_name} {scanner.last_name}".upper()
         hours = round(current_hours)
-        
-        # Обновляем общее количество часов, полученных в сертификатах
         scanner.total_certificate_hours += current_hours
         scanner.save()
-        
-        # Создаем сертификат
         file_data = create_certificate_pdf(full_name, hours, period=period_text, events_list=events_list)
         if file_data is None:
-            from django.shortcuts import redirect
             return redirect('home')
-        
-        # Обнуляем часы сканера при получении сертификата
         for participant in participations:
             participant.hours_awarded = 0
             participant.save()
-        
         filename = f"certificate_{scanner.last_name}_{scanner.first_name}.pdf"
-        
-        # Всегда возвращаем PDF напрямую
         response = HttpResponse(file_data, content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
@@ -1454,15 +1437,37 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
     pres_y = appr_y + appr_h + 30 * scale
     draw.text((pres_x, pres_y), pres_text, font=arial_bold_small, fill=(255,255,255,255))
 
-    # Имя и фамилия (Pinyon Script)
+    # Имя и фамилия (Pinyon Script) с автоматическим уменьшением размера
     def capitalize_name(name):
         return ' '.join([part.capitalize() for part in name.split()])
 
     name_text = capitalize_name(name)
-    name_w, name_h = get_text_size(name_text, pinyon_script)
+    
+    # Максимальная ширина для имени (чтобы помещалось в одну строку)
+    max_name_width = width - cert_x - 100 * scale  # оставляем отступ справа
+    
+    # Начальный размер шрифта
+    name_font_size = 60 * scale
+    min_font_size = 30 * scale  # минимальный размер
+    
+    # Подбираем размер шрифта чтобы имя поместилось в одну строку
+    while name_font_size >= min_font_size:
+        try:
+            current_name_font = ImageFont.truetype(pinyon_script_path, name_font_size)
+        except:
+            current_name_font = safe_font("C:/Windows/Fonts/ariali.ttf", name_font_size)
+        
+        name_w, name_h = get_text_size(name_text, current_name_font)
+        
+        if name_w <= max_name_width:
+            break
+        
+        name_font_size -= 2 * scale  # уменьшаем размер
+    
+    # Используем подобранный шрифт
     name_x = cert_x
     name_y = pres_y + pres_h + 10 * scale
-    draw.text((name_x, name_y), name_text, font=pinyon_script, fill=(255,255,255,255))
+    draw.text((name_x, name_y), name_text, font=current_name_font, fill=(255,255,255,255))
 
     years_text = ""
     if events_list:
@@ -1529,8 +1534,9 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
     except:
         hours_font = safe_font("C:/Windows/Fonts/arialbd.ttf", int(28 * scale))
     hours_w, hours_h = get_text_size(hours_text, hours_font)
-    hours_x = cert_x + 375 * scale  # намного левее
-    hours_y = name_y + name_h + 100 * scale  # еще ниже
+    # Фиксированные координаты часов (не зависят от других элементов)
+    hours_x = 460 * scale  # Абсолютная фиксированная позиция по X
+    hours_y = 608 * scale  # Абсолютная фиксированная позиция по Y
     draw.text((hours_x, hours_y), hours_text, font=hours_font, fill=(255,255,255,255))
 
     # Добавить штамп справа от часов, почти идеально круглый (растянуть совсем чуть-чуть)
@@ -1543,9 +1549,9 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
             oval_width = int(circle_diameter * 1.03)  # растянуть совсем чуть-чуть
             oval_height = circle_diameter
             stamp_img = stamp_img.resize((oval_width, oval_height), PILImage.LANCZOS)
-            # Координаты овала чуть правее
-            stamp_x = hours_x + hours_w + 30 * scale  # правее
-            stamp_y = hours_y - 10 * scale
+            # Полностью фиксированные координаты штампа (не зависят от других элементов)
+            stamp_x = 685 * scale  # Абсолютная фиксированная позиция по X
+            stamp_y = 608 * scale   # Абсолютная фиксированная позиция по Y
             img.paste(stamp_img, (int(stamp_x), int(stamp_y)), stamp_img)
     except Exception as e:
         print(f"Ошибка при добавлении штампа: {e}")

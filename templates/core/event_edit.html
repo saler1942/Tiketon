@@ -111,7 +111,7 @@
                 {% endfor %}
             </tbody>
         </table>
-        {% if is_admin %}
+        {% if is_admin or is_creator %}
         <div class="mt-3">
             <button name="save_participants" class="btn btn-primary">Сохранить изменения</button>
         </div>
@@ -170,8 +170,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const selectedVolunteers = {};
 
     // Проверяем, достигнут ли лимит сканеров
-    const currentParticipantsCount = {{ participants|length }};
-    const maxParticipantsCount = {{ event.max_scanners }};
+    const currentParticipantsCount = parseInt('{{ participants|length|default:0 }}');
+    const maxParticipantsCount = parseInt('{{ event.max_scanners|default:10 }}');
     
     if (currentParticipantsCount >= maxParticipantsCount) {
         limitNotification.style.display = 'block';
