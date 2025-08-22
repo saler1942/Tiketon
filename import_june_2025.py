@@ -163,7 +163,7 @@ def main():
         print(f"Available sheets: {wb.sheetnames}")
         
         # Select the sheet with February 2025 data
-        sheet = wb['Февраль 25']  # Use the specific sheet for February 2025
+        sheet = wb['апрель']  # Use the specific sheet for February 2025
         print(f"Selected sheet: {sheet.title}")
         
         # Get all team leaders from the database
@@ -329,43 +329,43 @@ def main():
         # Обновление часов для всех участников ивентов июня 2025
         print("\nОбновление часов для всех участников...")
         # Определяем год и месяц на основе выбранного листа
-        if sheet.title.lower() == 'февраль':
+        if sheet.title.lower() == 'Февраль':
             year = 2024
             month = 2
-        elif sheet.title.lower() == 'март':
+        elif sheet.title.lower() == 'Март':
             year = 2024
             month = 3
-        elif sheet.title.lower() == 'апрель':
+        elif sheet.title.lower() == 'Апрель':
             year = 2024
             month = 4
-        elif sheet.title.lower() == 'май':
+        elif sheet.title.lower() == 'Май':
             year = 2024
             month = 5
-        elif sheet.title.lower() == 'июнь':
+        elif sheet.title.lower() == 'Июнь':
             year = 2024
             month = 6
-        elif sheet.title.lower() == 'июль':
+        elif sheet.title.lower() == 'Июль':
             year = 2024
             month = 7
-        elif sheet.title.lower() == 'август':
+        elif sheet.title.lower() == 'Август':
             year = 2024
             month = 8
-        elif sheet.title.lower() == 'сентябрь':
+        elif sheet.title.lower() == 'Сентябрь':
             year = 2024
             month = 9
-        elif sheet.title.lower() == 'октябрь':
+        elif sheet.title.lower() == 'Октябрь':
             year = 2024
             month = 10
-        elif sheet.title.lower() == 'ноябрь':
+        elif sheet.title.lower() == 'Ноябрь':
             year = 2024
             month = 11
-        elif sheet.title.lower() == 'декабрь':
+        elif sheet.title.lower() == 'Декабрь':
             year = 2024
             month = 12
-        elif sheet.title.lower() == 'январь 25':
+        elif sheet.title.lower() == 'Январь 25':
             year = 2025
             month = 1
-        elif sheet.title.lower() == 'февраль 25':
+        elif sheet.title.lower() == 'Февраль 25':
             year = 2025
             month = 2
         elif sheet.title.lower() == 'март 25':
