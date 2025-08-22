@@ -171,7 +171,7 @@ CACHES = {
     }
 }
 
-# Кеширование сессий
+# Кеширование сессий yes
 SESSION_ENGINE = 'django.contrib.sessions.backends.cached_db'
 
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
