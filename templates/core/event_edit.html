@@ -1,0 +1,356 @@
+{% extends 'base.html' %}
+{% load custom_filters %}
+
+{% block title %}{{ event.name }} | Freedom Ticketon | CHEESES TEAM{% endblock %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-3">
+    <h1>{{ event.name }}</h1>
+    <div class="flex gap-2">
+        <a href="{% url 'generate_all_certificates' event.id %}" class="btn btn-success">Сертификаты для всех</a>
+        <a href="{% url 'events' %}" class="btn btn-secondary">← Назад к мероприятиям</a>
+        {% if is_admin %}
+        <a href="{% url 'event_delete' event.id %}" class="btn btn-danger" onclick="return confirm('Вы уверены, что хотите удалить это мероприятие?');">Удалить мероприятие</a>
+        {% endif %}
+    </div>
+</div>
+
+<div class="event-details mb-3">
+    <h2>{{ event.name }}</h2>
+    <div class="text-sm" style="color: #666;">
+        <div>Дата: {{ event.date }}</div>
+        <div>Ответственный: {{ event.created_by.first_name }} {{ event.created_by.last_name }}</div>
+        <div>Максимум сканеров: {{ event.max_scanners }}</div>
+        <div>Текущее количество: {{ participants.count }}</div>
+    </div>
+</div>
+
+<!-- Уведомление о достижении лимита сканеров -->
+<div id="limit-notification" style="display: none; background-color: #f8d7da; color: #721c24; padding: 10px 15px; border-radius: 4px; margin-bottom: 15px; border: 1px solid #f5c6cb;">
+    <strong>Внимание!</strong> Достигнуто максимальное количество сканеров ({{ event.max_scanners }}). Нельзя добавить больше.
+</div>
+
+<div class="card mb-3">
+    <h2 class="mb-2">Добавление сканеров</h2>
+    <div id="search-wrapper">
+        <form id="add-volunteer-form" method="post">
+            {% csrf_token %}
+            <div class="flex gap-2 mb-3">
+                <input id="volunteer-search" type="text" class="form-control" placeholder="Поиск сканера по имени или email" autocomplete="off" style="flex:1">
+                <button type="button" id="search-btn" class="btn btn-secondary">Найти</button>
+            </div>
+            
+            <!-- Новое поле для ввода нескольких имен через пробел -->
+            <div class="mb-3">
+                <label for="volunteer-names" class="block mb-1">Добавить несколько сканеров через пробел:</label>
+                <div class="flex gap-2">
+                    <input id="volunteer-names" name="volunteer_names" type="text" class="form-control" placeholder="Введите имена через пробел (например: Bondareva Veronika Sergazy)" style="flex:1">
+                    <button name="add_volunteer" class="btn btn-primary">Добавить всех</button>
+                </div>
+                <small class="text-muted">Пример: Bondareva Veronika Sergazy Zhaniya Beksultan Nadiya</small>
+            </div>
+            
+            <!-- Контейнер для выбранных сканеров с галочками -->
+            <div id="selected-volunteers" class="mb-3" style="display: none;">
+                <h3 class="mb-2">Выбранные сканеры:</h3>
+                <div id="selected-volunteers-list" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 4px;">
+                    <!-- Здесь будут отображаться выбранные сканеры -->
+                </div>
+                <div class="mt-2">
+                    <button name="add_volunteer" id="add-selected-btn" class="btn btn-success">Добавить выбранных</button>
+                </div>
+            </div>
+            
+            <!-- Скрытые поля для передачи ID выбранных сканеров -->
+            <div id="volunteer-ids-container"></div>
+        </form>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <h2 class="mb-2">Участники мероприятия</h2>
+    {% if participants %}
+    <form method="post">
+        {% csrf_token %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Сканер</th>
+                    {% if is_admin or is_creator %}
+                    <th style="width: 150px;">Зачтено часов</th>
+                    {% endif %}
+                    <th style="width: 180px;">Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in participants %}
+                <tr>
+                    <td>{{ p.volunteer.first_name }} {{ p.volunteer.last_name }}</td>
+                    {% if is_admin or is_creator %}
+                    <td style="font-weight: 500;">
+                        {% with total=p.hours_awarded %}
+                            {% with h=total|floatformat:0 %}
+                                {% with m=total|subtract:h|multiply:60|floatformat:0 %}
+                                    {{ h }}:{% if m|add:'0'|length == 1 %}0{% endif %}{{ m|add:'0' }}
+                                {% endwith %}
+                            {% endwith %}
+                        {% endwith %}
+                    </td>
+                    {% endif %}
+                    <td>
+                        <a href="{% url 'generate_certificate' p.id %}" class="btn btn-success" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;">Сертификат</a>
+                        {% if is_admin or is_creator %}
+                        <form method="post" style="display:inline;" onsubmit="return confirm('Удалить сканера из мероприятия?');">
+                            {% csrf_token %}
+                            <input type="hidden" name="participant_id" value="{{ p.id }}">
+                            <button type="submit" name="remove_participant" class="btn btn-danger" style="font-size: 0.8rem; padding: 0.2rem 0.5rem;">Удалить</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% if is_admin or is_creator %}
+        <div class="mt-3">
+            <button name="save_participants" class="btn btn-primary">Сохранить изменения</button>
+        </div>
+        {% endif %}
+    </form>
+    {% else %}
+    <p style="color: #666; text-align: center; padding: 1rem;">
+        Пока нет добавленных сканеров
+    </p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2 class="mb-2">Завершение мероприятия</h2>
+    <p class="mb-2" style="color: #666;">
+        После завершения мероприятия укажите его фактическую длительность в часах. 
+        На основе этого будут рассчитаны часы для сканеров.
+    </p>
+    <form method="post" class="flex gap-2 items-center">
+        {% csrf_token %}
+        <input name="duration_hours" type="number" min="0.5" step="0.5" value="{{ event.duration_hours|default:'' }}" 
+               class="form-control" placeholder="Длительность (часов)" style="max-width: 200px;">
+        <button name="set_duration" class="btn btn-success">Завершить мероприятие</button>
+    </form>
+</div>
+
+<div class="card mt-3">
+    <h2 class="mb-2">Сертификаты</h2>
+    <p class="mb-2" style="color: #666;">
+        Вы можете сгенерировать сертификаты для участников мероприятия.
+        Сертификаты создаются на основе шаблона с автоматическим заполнением данных участника.
+    </p>
+    <div>
+        <a href="{% url 'generate_all_certificates' event.id %}" class="btn btn-success">Сгенерировать для всех участников</a>
+        <a href="{% url 'scanner_certificates' %}" class="btn btn-primary">Персональные сертификаты</a>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<!-- Выпадающий список поиска -->
+<div id="volunteer-results" style="display:none; position: absolute; z-index: 10000; background: white; border: 1px solid #ddd; border-radius: 4px; box-shadow: 0 5px 15px rgba(0,0,0,0.3); max-height: 300px; overflow-y: auto;"></div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('volunteer-search');
+    const searchBtn = document.getElementById('search-btn');
+    const resultsBox = document.getElementById('volunteer-results');
+    const selectedVolunteersContainer = document.getElementById('selected-volunteers');
+    const selectedVolunteersList = document.getElementById('selected-volunteers-list');
+    const volunteerIdsContainer = document.getElementById('volunteer-ids-container');
+    const limitNotification = document.getElementById('limit-notification');
+    let timer;
+    
+    // Объект для хранения выбранных сканеров
+    const selectedVolunteers = {};
+
+    // Проверяем, достигнут ли лимит сканеров
+    const currentParticipantsCount = parseInt('{{ participants|length|default:0 }}');
+    const maxParticipantsCount = parseInt('{{ event.max_scanners|default:10 }}');
+    
+    if (currentParticipantsCount >= maxParticipantsCount) {
+        limitNotification.style.display = 'block';
+        searchInput.disabled = true;
+        searchBtn.disabled = true;
+        document.getElementById('volunteer-names').disabled = true;
+    }
+
+    // Функция для позиционирования выпадающего списка
+    function updatePosition() {
+        const rect = searchInput.getBoundingClientRect();
+        resultsBox.style.width = rect.width + 'px';
+        resultsBox.style.left = rect.left + window.pageXOffset + 'px';
+        resultsBox.style.top = rect.bottom + window.pageYOffset + 'px';
+    }
+    
+    // Функция для обновления списка выбранных сканеров
+    function updateSelectedVolunteers() {
+        // Очищаем контейнер
+        selectedVolunteersList.innerHTML = '';
+        volunteerIdsContainer.innerHTML = '';
+        
+        // Получаем массив ID выбранных сканеров
+        const volunteerIds = Object.keys(selectedVolunteers);
+        
+        if (volunteerIds.length > 0) {
+            selectedVolunteersContainer.style.display = 'block';
+            
+            // Добавляем каждого выбранного сканера в список
+            volunteerIds.forEach(id => {
+                const volunteer = selectedVolunteers[id];
+                
+                // Создаем элемент для сканера
+                const div = document.createElement('div');
+                div.className = 'selected-volunteer-item';
+                div.style.padding = '5px';
+                div.style.marginBottom = '5px';
+                div.style.borderBottom = '1px solid #eee';
+                
+                // Создаем чекбокс
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = true;
+                checkbox.style.marginRight = '10px';
+                checkbox.addEventListener('change', function() {
+                    if (!this.checked) {
+                        delete selectedVolunteers[id];
+                        updateSelectedVolunteers();
+                    }
+                });
+                
+                // Создаем скрытое поле для передачи ID
+                const hiddenInput = document.createElement('input');
+                hiddenInput.type = 'hidden';
+                hiddenInput.name = 'volunteer_ids[]';
+                hiddenInput.value = id;
+                volunteerIdsContainer.appendChild(hiddenInput);
+                
+                // Добавляем имя сканера
+                div.appendChild(checkbox);
+                div.appendChild(document.createTextNode(volunteer.name + ' (' + volunteer.email + ')'));
+                
+                selectedVolunteersList.appendChild(div);
+            });
+            
+            // Показываем кнопку добавления
+            document.getElementById('add-selected-btn').style.display = 'block';
+        } else {
+            selectedVolunteersContainer.style.display = 'none';
+        }
+    }
+
+    // Перемещаем список в body для абсолютного позиционирования
+    document.body.appendChild(resultsBox);
+
+    // Функция поиска сканеров
+    function searchVolunteers() {
+        const q = searchInput.value.trim();
+        if (q.length < 2) { 
+            resultsBox.style.display = 'none'; 
+            return; 
+        }
+        
+        fetch(`/api/scanner-search/?q=${encodeURIComponent(q)}&event_id={{ event.id }}`)
+            .then(r => r.json())
+            .then(data => {
+                resultsBox.innerHTML = '';
+                if (data.results.length === 0) { 
+                    const div = document.createElement('div');
+                    div.textContent = 'Не найдено сканеров';
+                    div.style.padding = '10px';
+                    div.style.color = '#666';
+                    resultsBox.appendChild(div);
+                } else {
+                    data.results.forEach(v => {
+                        const div = document.createElement('div');
+                        div.textContent = v.name + ' (' + v.email + ')';
+                        div.style.padding = '10px';
+                        div.style.borderBottom = '1px solid #eee';
+                        div.style.cursor = 'pointer';
+                        
+                        div.addEventListener('mouseover', function() {
+                            this.style.backgroundColor = '#f0f0f0';
+                        });
+                        div.addEventListener('mouseout', function() {
+                            this.style.backgroundColor = '';
+                        });
+                        
+                        div.addEventListener('click', function() {
+                            // Добавляем сканера в список выбранных
+                            selectedVolunteers[v.id] = {
+                                id: v.id,
+                                name: v.name,
+                                email: v.email
+                            };
+                            
+                            // Обновляем список выбранных сканеров
+                            updateSelectedVolunteers();
+                            
+                            // Очищаем поле поиска и скрываем результаты
+                            searchInput.value = '';
+                            resultsBox.style.display = 'none';
+                        });
+                        
+                        resultsBox.appendChild(div);
+                    });
+                }
+                
+                // Обновляем позицию и показываем список
+                updatePosition();
+                resultsBox.style.display = 'block';
+            });
+    }
+
+    // Обработчик ввода в поле поиска
+    searchInput.addEventListener('input', function() {
+        clearTimeout(timer);
+        timer = setTimeout(searchVolunteers, 200);
+    });
+    
+    // Обработчик клика на кнопку поиска
+    searchBtn.addEventListener('click', searchVolunteers);
+
+    // Обновляем позицию при прокрутке и изменении размера окна
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition);
+    
+    // Фокус на поле ввода
+    searchInput.addEventListener('focus', function() {
+        if (resultsBox.style.display === 'block') {
+            updatePosition();
+        }
+    });
+
+    // Проверка на превышение лимита при отправке формы
+    document.getElementById('add-volunteer-form').addEventListener('submit', function(e) {
+        // Проверяем, не превышен ли лимит сканеров
+        if (currentParticipantsCount >= maxParticipantsCount) {
+            e.preventDefault();
+            limitNotification.style.display = 'block';
+            
+            // Прокручиваем к уведомлению
+            limitNotification.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            // Выделяем уведомление на короткое время
+            limitNotification.style.transition = 'background-color 0.3s';
+            limitNotification.style.backgroundColor = '#dc3545';
+            setTimeout(() => {
+                limitNotification.style.backgroundColor = '#f8d7da';
+            }, 500);
+        }
+    });
+    
+    // Закрытие выпадающего списка при клике вне его
+    document.addEventListener('click', function(e) {
+        if (!resultsBox.contains(e.target) && e.target !== searchInput && e.target !== searchBtn) {
+            resultsBox.style.display = 'none';
+        }
+    });
+});
+</script>
+{% endblock %} 

@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+
+{% block title %}Сертификат волонтера{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1 class="mb-4">Сертификат волонтера</h1>
+    
+    <div class="card">
+        <div class="card-header">
+            <h3>{{ scanner.first_name }} {{ scanner.last_name }}</h3>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <p><strong>Всего мероприятий:</strong> {{ participations.count }}</p>
+                    <p><strong>Суммарно часов:</strong> {{ total_hours }}</p>
+                </div>
+                <div class="col-md-6">
+                    <div class="dropdown float-right">
+                        <button class="btn btn-primary dropdown-toggle" type="button" id="scannerCertDropdown" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                            Скачать сертификат
+                        </button>
+                        <div class="dropdown-menu" aria-labelledby="scannerCertDropdown">
+                            <a class="dropdown-item" href="{% url 'generate_scanner_certificate' scanner.id %}?format=pdf">Скачать PDF</a>
+                            <a class="dropdown-item" href="{% url 'generate_scanner_certificate' scanner.id %}?format=png">Скачать PNG</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <h5 class="mt-4">Список мероприятий</h5>
+            {% if participations %}
+            <div class="table-responsive">
+                <table class="table table-bordered table-hover">
+                    <thead class="thead-light">
+                        <tr>
+                            <th>Мероприятие</th>
+                            <th>Дата</th>
+                            <th>Часы волонтерства</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for participation in participations %}
+                        <tr>
+                            <td>{{ participation.event.name }}</td>
+                            <td>{{ participation.event.date|date:"d.m.Y" }}</td>
+                            <td>{{ participation.hours_awarded }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted">Нет участий в мероприятиях</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %} 

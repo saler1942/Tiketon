@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+
+{% block title %}Удаление мероприятия | Freedom Ticketon{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 500px; margin: 2rem auto; text-align: center;">
+    <h2>Удалить мероприятие?</h2>
+    <p>Вы уверены, что хотите удалить мероприятие <b>{{ event.name }}</b> ({{ event.date }})?</p>
+    <form method="post">
+        {% csrf_token %}
+        <a href="{% url 'event_edit' event.id %}" class="btn btn-secondary">Отмена</a>
+        <button type="submit" class="btn btn-danger">Удалить</button>
+    </form>
+</div>
+{% endblock %} 
