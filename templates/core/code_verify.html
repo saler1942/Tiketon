@@ -2,29 +2,177 @@
 
 {% block title %}Подтверждение входа | Freedom Ticketon | CHEESES TEAM{% endblock %}
 
+{% block extra_css %}
+<style>
+    .verify-container {
+        max-width: 400px;
+        margin: 3rem auto;
+        padding: 0 1rem;
+    }
+    
+    .verify-card {
+        background: white;
+        padding: 2rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+    
+    .verify-card h1 {
+        text-align: center;
+        margin-bottom: 2rem;
+        font-size: 24px;
+    }
+    
+    .verify-info {
+        text-align: center;
+        color: #555;
+        margin-bottom: 1.5rem;
+        line-height: 1.6;
+    }
+    
+    .alert {
+        padding: 12px 15px;
+        border-radius: 6px;
+        margin-bottom: 1rem;
+    }
+    
+    .alert-danger {
+        background: #f8d7da;
+        color: #721c24;
+    }
+    
+    .alert-info {
+        background: #d1ecf1;
+        color: #0c5460;
+    }
+    
+    .form-group {
+        margin-bottom: 1.5rem;
+    }
+    
+    .form-group label {
+        display: block;
+        margin-bottom: 0.5rem;
+        font-weight: 500;
+        color: #333;
+    }
+    
+    .form-control {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        font-size: 16px;
+        box-sizing: border-box;
+        transition: border-color 0.3s;
+    }
+    
+    .form-control:focus {
+        outline: none;
+        border-color: #00a651;
+        box-shadow: 0 0 0 3px rgba(0, 166, 81, 0.1);
+    }
+    
+    .btn {
+        width: 100%;
+        padding: 12px 20px;
+        border: none;
+        border-radius: 6px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+    
+    .btn-primary {
+        background: #00a651;
+        color: white;
+    }
+    
+    .btn-primary:hover {
+        background: #008a41;
+    }
+    
+    .code-display {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 6px;
+        text-align: center;
+        margin-bottom: 1.5rem;
+        border: 2px solid #e0e0e0;
+    }
+    
+    .code-label {
+        font-size: 12px;
+        color: #666;
+        margin-bottom: 0.5rem;
+    }
+    
+    .code-value {
+        font-size: 32px;
+        font-weight: bold;
+        color: #00a651;
+        letter-spacing: 4px;
+        font-family: monospace;
+    }
+    
+    @media (max-width: 480px) {
+        .verify-container {
+            margin: 1rem auto;
+            padding: 0 0.75rem;
+        }
+        
+        .verify-card {
+            padding: 1.5rem;
+        }
+        
+        .verify-card h1 {
+            font-size: 20px;
+            margin-bottom: 1.5rem;
+        }
+        
+        .code-value {
+            font-size: 24px;
+        }
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="card" style="max-width: 400px; margin: 3rem auto;">
-    <h1 style="text-align: center; margin-bottom: 2rem;">Подтверждение входа</h1>
-    
-    <p class="mb-3" style="text-align: center; color: #555;">
-        Мы отправили код подтверждения на ваш email.<br>
-        Введите его, чтобы войти в систему.
-    </p>
-    
-    {% if error %}
-    <div class="alert alert-danger mb-3" style="color: var(--danger-color); padding: 0.75rem; background: #fff1f1; border-radius: 4px; margin-bottom: 1rem;">
-        {{ error }}
-    </div>
-    {% endif %}
-
-    <form method="post">
-        {% csrf_token %}
-        <div class="form-group">
-            <label for="code">Код подтверждения</label>
-            <input id="code" name="code" type="text" class="form-control" placeholder="123456" required autofocus>
+<div class="verify-container">
+    <div class="verify-card">
+        <h1>Подтверждение входа</h1>
+        
+        <p class="verify-info">
+            Мы отправили код подтверждения на ваш email.<br>
+            Введите его, чтобы войти в систему.
+        </p>
+        
+        {% if error %}
+        <div class="alert alert-danger">
+            {{ error }}
         </div>
+        {% endif %}
+        
+        {% if show_code %}
+        <div class="alert alert-info">
+            <strong>Код для тестирования:</strong>
+        </div>
+        <div class="code-display">
+            <div class="code-label">Ваш код подтверждения</div>
+            <div class="code-value">{{ auth_code }}</div>
+        </div>
+        {% endif %}
 
-        <button type="submit" class="btn btn-primary" style="width: 100%;">Подтвердить</button>
-    </form>
+        <form method="post">
+            {% csrf_token %}
+            <div class="form-group">
+                <label for="code">Код подтверждения</label>
+                <input id="code" name="code" type="text" class="form-control" placeholder="123456" required autofocus>
+            </div>
+
+            <button type="submit" class="btn btn-primary">Подтвердить</button>
+        </form>
+    </div>
 </div>
 {% endblock %} 

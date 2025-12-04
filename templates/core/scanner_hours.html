@@ -1,0 +1,412 @@
+{% extends 'base.html' %}
+
+{% block title %}Просмотр часов | Freedom Ticketon{% endblock %}
+
+{% block extra_css %}
+<style>
+    .scanner-hours-container {
+        max-width: 900px;
+        margin: 2rem auto;
+    }
+    
+    .search-section {
+        background: #f8f9fa;
+        padding: 2rem;
+        border-radius: 8px;
+        margin-bottom: 2rem;
+    }
+    
+    .search-input-wrapper {
+        position: relative;
+    }
+    
+    .search-input {
+        width: 100%;
+        padding: 12px 15px;
+        font-size: 16px;
+        border: 2px solid #e0e0e0;
+        border-radius: 6px;
+        transition: border-color 0.3s;
+    }
+    
+    .search-input:focus {
+        outline: none;
+        border-color: #00a651;
+        box-shadow: 0 0 0 3px rgba(0, 166, 81, 0.1);
+    }
+    
+    .search-results {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: white;
+        border: 1px solid #e0e0e0;
+        border-top: none;
+        border-radius: 0 0 6px 6px;
+        max-height: 300px;
+        overflow-y: auto;
+        z-index: 1000;
+        display: none;
+    }
+    
+    .search-results.active {
+        display: block;
+    }
+    
+    .search-result-item {
+        padding: 12px 15px;
+        cursor: pointer;
+        border-bottom: 1px solid #f0f0f0;
+        transition: background-color 0.2s;
+    }
+    
+    .search-result-item:hover {
+        background-color: #f8f9fa;
+    }
+    
+    .search-result-item:last-child {
+        border-bottom: none;
+    }
+    
+    .result-name {
+        font-weight: 500;
+        color: #333;
+    }
+    
+    .result-hours {
+        font-size: 14px;
+        color: #666;
+        margin-top: 4px;
+    }
+    
+    .scanner-info {
+        background: white;
+        padding: 2rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        margin-bottom: 2rem;
+        display: none;
+    }
+    
+    .scanner-info.active {
+        display: block;
+    }
+    
+    .scanner-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+        padding-bottom: 1.5rem;
+        border-bottom: 2px solid #f0f0f0;
+    }
+    
+    .scanner-name {
+        font-size: 24px;
+        font-weight: bold;
+        color: #333;
+    }
+    
+    .total-hours {
+        font-size: 32px;
+        font-weight: bold;
+        color: #00a651;
+        text-align: right;
+    }
+    
+    .total-hours-label {
+        font-size: 14px;
+        color: #666;
+        font-weight: normal;
+    }
+    
+    .events-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+    }
+    
+    .events-table thead {
+        background-color: #f8f9fa;
+    }
+    
+    .events-table th {
+        padding: 12px;
+        text-align: left;
+        font-weight: 600;
+        color: #333;
+        border-bottom: 2px solid #e0e0e0;
+    }
+    
+    .events-table td {
+        padding: 12px;
+        border-bottom: 1px solid #e0e0e0;
+    }
+    
+    .events-table tbody tr:hover {
+        background-color: #f8f9fa;
+    }
+    
+    .event-hours {
+        font-weight: 600;
+        color: #00a651;
+    }
+    
+    .no-events {
+        text-align: center;
+        padding: 2rem;
+        color: #999;
+    }
+    
+    .loading {
+        text-align: center;
+        padding: 2rem;
+        color: #666;
+    }
+    
+    .error-message {
+        background-color: #f8d7da;
+        color: #721c24;
+        padding: 12px 15px;
+        border-radius: 6px;
+        margin-bottom: 1rem;
+        display: none;
+    }
+    
+    .error-message.active {
+        display: block;
+    }
+    
+    .back-button {
+        display: inline-block;
+        margin-bottom: 1rem;
+        padding: 8px 16px;
+        background-color: #f0f0f0;
+        color: #333;
+        text-decoration: none;
+        border-radius: 6px;
+        transition: background-color 0.2s;
+    }
+    
+    .back-button:hover {
+        background-color: #e0e0e0;
+        text-decoration: none;
+    }
+    
+    .info-text {
+        font-size: 14px;
+        color: #666;
+        margin-top: 1rem;
+    }
+    
+    @media (max-width: 768px) {
+        .scanner-hours-container {
+            margin: 1rem;
+        }
+        
+        .search-section {
+            padding: 1.5rem;
+        }
+        
+        .scanner-header {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        
+        .total-hours {
+            text-align: left;
+            margin-top: 1rem;
+        }
+        
+        .events-table {
+            font-size: 14px;
+        }
+        
+        .events-table th,
+        .events-table td {
+            padding: 8px;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="scanner-hours-container">
+    <h1 style="margin-bottom: 2rem; text-align: center;">Просмотр часов волонтера</h1>
+    
+    <div class="search-section">
+        <p style="margin-bottom: 1rem; color: #666;">Введите ваше имя или фамилию, чтобы найти себя и посмотреть накопленные часы</p>
+        
+        <div class="search-input-wrapper">
+            <input 
+                type="text" 
+                id="scannerSearch" 
+                class="search-input" 
+                placeholder="Введите имя или фамилию..."
+                autocomplete="off"
+            >
+            <div id="searchResults" class="search-results"></div>
+        </div>
+        
+        <div class="info-text">
+            💡 Введите минимум 2 символа для поиска
+        </div>
+    </div>
+    
+    <div id="errorMessage" class="error-message"></div>
+    
+    <div id="scannerInfo" class="scanner-info">
+        <a href="#" class="back-button" onclick="resetSearch(); return false;">← Новый поиск</a>
+        
+        <div class="scanner-header">
+            <div>
+                <div class="scanner-name" id="scannerName"></div>
+            </div>
+            <div>
+                <div class="total-hours-label">Всего часов</div>
+                <div class="total-hours" id="totalHours">0</div>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 1rem;">
+            <strong>Количество мероприятий:</strong> <span id="eventsCount">0</span>
+        </div>
+        
+        <h3 style="margin-top: 2rem; margin-bottom: 1rem;">История участия в мероприятиях</h3>
+        
+        <div id="eventsContainer">
+            <table class="events-table">
+                <thead>
+                    <tr>
+                        <th>Название мероприятия</th>
+                        <th>Дата</th>
+                        <th>Место</th>
+                        <th style="text-align: right;">Часы</th>
+                    </tr>
+                </thead>
+                <tbody id="eventsList">
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    const searchInput = document.getElementById('scannerSearch');
+    const searchResults = document.getElementById('searchResults');
+    const scannerInfo = document.getElementById('scannerInfo');
+    const errorMessage = document.getElementById('errorMessage');
+    
+    let searchTimeout;
+    
+    searchInput.addEventListener('input', function() {
+        clearTimeout(searchTimeout);
+        const query = this.value.trim();
+        
+        if (query.length < 2) {
+            searchResults.classList.remove('active');
+            return;
+        }
+        
+        searchTimeout = setTimeout(() => {
+            performSearch(query);
+        }, 300);
+    });
+    
+    function performSearch(query) {
+        fetch(`/api/scanner-search-hours/?q=${encodeURIComponent(query)}`)
+            .then(response => response.json())
+            .then(data => {
+                displaySearchResults(data.results);
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showError('Ошибка при поиске');
+            });
+    }
+    
+    function displaySearchResults(results) {
+        if (results.length === 0) {
+            searchResults.innerHTML = '<div style="padding: 12px 15px; color: #999;">Ничего не найдено</div>';
+            searchResults.classList.add('active');
+            return;
+        }
+        
+        searchResults.innerHTML = results.map(scanner => `
+            <div class="search-result-item" onclick="selectScanner(${scanner.id})">
+                <div class="result-name">${scanner.name}</div>
+                <div class="result-hours">Всего часов: ${scanner.total_hours.toFixed(1)}</div>
+            </div>
+        `).join('');
+        
+        searchResults.classList.add('active');
+    }
+    
+    function selectScanner(scannerId) {
+        searchResults.classList.remove('active');
+        searchInput.value = '';
+        
+        fetch(`/api/scanner-details-hours/${scannerId}/`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    displayScannerInfo(data.scanner, data.events);
+                } else {
+                    showError(data.error || 'Ошибка при загрузке данных');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showError('Ошибка при загрузке данных');
+            });
+    }
+    
+    function displayScannerInfo(scanner, events) {
+        document.getElementById('scannerName').textContent = scanner.name;
+        document.getElementById('totalHours').textContent = scanner.total_hours.toFixed(1);
+        document.getElementById('eventsCount').textContent = scanner.events_count;
+        
+        const eventsList = document.getElementById('eventsList');
+        
+        if (events.length === 0) {
+            eventsList.innerHTML = '<tr><td colspan="4" class="no-events">Нет записей о участии в мероприятиях</td></tr>';
+        } else {
+            eventsList.innerHTML = events.map(event => `
+                <tr>
+                    <td>${event.event_name}</td>
+                    <td>${event.event_date}</td>
+                    <td>${event.location}</td>
+                    <td style="text-align: right;" class="event-hours">${event.hours.toFixed(1)}</td>
+                </tr>
+            `).join('');
+        }
+        
+        scannerInfo.classList.add('active');
+        hideError();
+    }
+    
+    function resetSearch() {
+        searchInput.value = '';
+        searchResults.classList.remove('active');
+        scannerInfo.classList.remove('active');
+        searchInput.focus();
+    }
+    
+    function showError(message) {
+        errorMessage.textContent = message;
+        errorMessage.classList.add('active');
+    }
+    
+    function hideError() {
+        errorMessage.classList.remove('active');
+    }
+    
+    // Закрытие результатов поиска при клике вне
+    document.addEventListener('click', function(event) {
+        if (!event.target.closest('.search-input-wrapper')) {
+            searchResults.classList.remove('active');
+        }
+    });
+</script>
+{% endblock %}
