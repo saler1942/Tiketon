@@ -1687,3 +1687,97 @@ def scanner_info_api(request, scanner_id):
             'success': False,
             'error': str(e)
         }, status=400)
+
+# ============= Функции для сканеров (просмотр часов без входа) =============
+
+def scanner_hours_view(request):
+    """Страница для просмотра часов сканером без входа"""
+    return render(request, 'core/scanner_hours.html')
+
+def scanner_search_hours(request):
+    """API для поиска сканера по имени/фамилии"""
+    query = request.GET.get('q', '').strip()
+    
+    if not query or len(query) < 2:
+        return JsonResponse({'results': []})
+    
+    # Разбиваем запрос на части
+    search_terms = query.lower().split()
+    
+    # Ищем сканеров по имени или фамилии
+    scanners_list = []
+    
+    # Создаем Q-объект для поиска
+    q_filter = Q()
+    for term in search_terms:
+        q_filter |= Q(first_name__icontains=term) | Q(last_name__icontains=term)
+    
+    scanners = Scanner.objects.filter(q_filter).order_by('last_name', 'first_name')[:20]
+    
+    for scanner in scanners:
+        # Подсчитываем общие часы для сканера
+        total_hours = EventParticipant.objects.filter(
+            volunteer=scanner
+        ).aggregate(total=Coalesce(Sum('hours_awarded'), 0.0))['total']
+        
+        scanners_list.append({
+            'id': scanner.id,
+            'name': f'{scanner.first_name} {scanner.last_name}',
+            'first_name': scanner.first_name,
+            'last_name': scanner.last_name,
+            'total_hours': float(total_hours)
+        })
+    
+    return JsonResponse({'results': scanners_list})
+
+def scanner_details_hours(request, scanner_id):
+    """Получить детальную информацию о часах сканера"""
+    try:
+        scanner = Scanner.objects.get(id=scanner_id)
+        
+        # Получаем все мероприятия, в которых участвовал сканер
+        participants = EventParticipant.objects.filter(
+            volunteer=scanner
+        ).select_related('event').order_by('-event__date')
+        
+        events_data = []
+        total_hours = 0
+        
+        for participant in participants:
+            event = participant.event
+            hours = participant.hours_awarded or 0
+            total_hours += hours
+            
+            events_data.append({
+                'event_name': event.name,
+                'event_date': event.date.strftime('%d.%m.%Y') if event.date else 'N/A',
+                'hours': float(hours),
+                'location': event.location or 'Не указано'
+            })
+        
+        data = {
+            'success': True,
+            'scanner': {
+                'id': scanner.id,
+                'name': f'{scanner.first_name} {scanner.last_name}',
+                'first_name': scanner.first_name,
+                'last_name': scanner.last_name,
+                'email': scanner.email,
+                'total_hours': float(total_hours),
+                'events_count': len(events_data)
+            },
+            'events': events_data
+        }
+        
+        return JsonResponse(data)
+        
+    except Scanner.DoesNotExist:
+        return JsonResponse({
+            'success': False,
+            'error': 'Сканер не найден'
+        }, status=404)
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=400)

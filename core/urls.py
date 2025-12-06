@@ -28,4 +28,9 @@ urlpatterns = [
     
     # Диагностика шаблона
     path('debug/template/', views.debug_template, name='debug_template'),
+    
+    # Просмотр часов сканером без входа
+    path('scanner-hours/', views.scanner_hours_view, name='scanner_hours'),
+    path('api/scanner-search-hours/', views.scanner_search_hours, name='scanner_search_hours'),
+    path('api/scanner-details-hours/<int:scanner_id>/', views.scanner_details_hours, name='scanner_details_hours'),
 ] 
