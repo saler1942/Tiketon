@@ -1,8 +1,19 @@
 {% extends 'base.html' %}
 
+<<<<<<< HEAD
 {% block title %}Генерация сертификатов | Freedom Ticketon | TEAM SYRYM{% endblock %}
 
 {% block content %}
+=======
+{% block title %}Генерация сертификатов | Freedom Ticketon | CHEESES TEAM{% endblock %}
+
+{% block content %}
+{% if messages %}
+  {% for message in messages %}
+    <div>{{ message }}</div>
+  {% endfor %}
+{% endif %}
+>>>>>>> 43904bd (final)
 <div class="flex justify-between items-center mb-3" style="flex-wrap: wrap; gap: 1rem;">
     <h1>Сертификаты сканеров</h1>
     <div class="flex gap-2">

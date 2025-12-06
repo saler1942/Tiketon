@@ -1,17 +1,18 @@
 from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib.auth.decorators import login_required
 from django.contrib.auth import authenticate, login
-from django.contrib.auth.models import User, Group
-from django.contrib import messages
-from django.http import JsonResponse, HttpResponse, FileResponse
-from django.db.models import Q, Sum, Min, Max, FloatField, Count, Value, Case, When, IntegerField, F
+from django.contrib.auth.models import User
+from django.http import HttpResponse, JsonResponse
+from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
+from django.db.models import Q, Sum, F
 from django.db.models.functions import Coalesce
+from django.utils import timezone
+from django.core.mail import send_mail
 from django.conf import settings
+from django.views.decorators.http import require_http_methods
 from django.core.cache import cache
-from django.views.decorators.cache import cache_page
+from .models import Scanner, Event, EventParticipant
 import random
-import string
-import os
-import io
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
@@ -37,23 +38,21 @@ from pptx.dml.color import RGBColor
 import sys
 import platform
 import time
-import re
+from functools import wraps
 
-from .models import Scanner, Event, EventParticipant, PurgeSettings, NotificationLog
+from .models import Scanner, Event, EventParticipant
 
 # Проверка доступа (только тимлидеры и админы)
 def is_team_leader_or_admin(user):
     return user.is_authenticated and (user.is_team_leader or user.is_staff)
 
 def team_leader_required(view_func):
-    return user_passes_test(is_team_leader_or_admin)(view_func)
-
-# Проверка прав администратора
-def is_admin(user):
-    return user.is_authenticated and user.is_staff
-
-def admin_required(view_func):
-    return user_passes_test(is_admin)(view_func)
+    @wraps(view_func)
+    def _wrapped_view(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return redirect('home')
+        return user_passes_test(is_team_leader_or_admin)(view_func)(request, *args, **kwargs)
+    return _wrapped_view
 
 # Авторизация
 def login_request(request):
@@ -63,7 +62,7 @@ def login_request(request):
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
-            return render(request, 'core/login.html', {'error': 'Только для тимлидеров'})
+            return render(request, 'core/login.html', {'error': 'Только для Ответственных'})
         code = str(random.randint(100000, 999999))
         request.session['auth_code'] = code
         request.session['auth_email'] = email
@@ -176,18 +175,56 @@ def event_edit(request, event_id):
                 # Проверяем, есть ли строка с именами для поиска
                 volunteer_names = request.POST.get('volunteer_names', '').strip()
                 if volunteer_names:
-                    # Разбиваем строку на имена и ищем сканеров
-                    names = volunteer_names.split()
-                    if names:
-                        # Создаем запрос для поиска сканеров по именам
-                        query = Q()
-                        for name in names:
-                            if name:
-                                query |= Q(first_name__icontains=name) | Q(last_name__icontains=name)
+                    # Разделяем ввод на отдельных людей (по запятой или новой строке)
+                    people = []
+                    for line in volunteer_names.split('\n'):
+                        people.extend([p.strip() for p in line.split(',') if p.strip()])
+                    
+                    # Для каждого человека ищем соответствующих сканеров
+                    for person in people:
+                        # Разбиваем на слова (имя и фамилию)
+                        name_parts = person.split()
                         
-                        # Получаем ID найденных сканеров
-                        found_scanners = Scanner.objects.filter(query).values_list('id', flat=True)
-                        volunteer_ids.extend([str(id) for id in found_scanners])
+                        if len(name_parts) >= 2:
+                            # Если два слова, пробуем найти как одного человека (имя + фамилия)
+                            # Вариант 1: первое слово - фамилия, второе - имя
+                            last_name1 = name_parts[0]
+                            first_name1 = name_parts[1]
+                            exact_match1 = Scanner.objects.filter(
+                                first_name__icontains=first_name1,
+                                last_name__icontains=last_name1
+                            )
+                            
+                            # Вариант 2: первое слово - имя, второе - фамилия
+                            first_name2 = name_parts[0]
+                            last_name2 = name_parts[1]
+                            exact_match2 = Scanner.objects.filter(
+                                first_name__icontains=first_name2,
+                                last_name__icontains=last_name2
+                            )
+                            
+                            # Если нашли точное совпадение в любом варианте
+                            exact_match = list(exact_match1) + list(exact_match2)
+                            if exact_match:
+                                # Используем только точные совпадения
+                                found_ids = [str(scanner.id) for scanner in exact_match]
+                                volunteer_ids.extend(found_ids)
+                            else:
+                                # Если точного совпадения нет, ищем каждое слово отдельно
+                                query = Q()
+                                for name in name_parts:
+                                    if name:
+                                        query |= Q(first_name__icontains=name) | Q(last_name__icontains=name)
+                                
+                                found_ids = [str(id) for id in Scanner.objects.filter(query).values_list('id', flat=True)]
+                                volunteer_ids.extend(found_ids)
+                        elif name_parts:
+                            # Если только одно слово, ищем по имени ИЛИ фамилии
+                            name = name_parts[0]
+                            found_ids = [str(id) for id in Scanner.objects.filter(
+                                Q(first_name__icontains=name) | Q(last_name__icontains=name)
+                            ).values_list('id', flat=True)]
+                            volunteer_ids.extend(found_ids)
                 
                 # Убираем дубликаты
                 volunteer_ids = list(set(volunteer_ids))
@@ -220,7 +257,7 @@ def event_edit(request, event_id):
                     messages.warning(request, f'{not_added_count} сканеров не были добавлены (уже участвуют или не найдены)')
                 
                 return redirect('event_edit', event_id=event.id)
-            if 'remove_participant' in request.POST and request.user.is_staff:
+            if 'remove_participant' in request.POST:
                 participant_id = request.POST.get('participant_id')
                 try:
                     participant = EventParticipant.objects.get(id=participant_id, event=event)
@@ -229,10 +266,10 @@ def event_edit(request, event_id):
                 except EventParticipant.DoesNotExist:
                     messages.error(request, 'Участник не найден')
                 return redirect('event_edit', event_id=event.id)
-            if 'save_participants' in request.POST and request.user.is_staff:
+            if 'save_participants' in request.POST:
                 messages.success(request, 'Изменения сохранены')
                 pass
-            if 'set_duration' in request.POST and request.user.is_staff:
+            if 'set_duration' in request.POST:
                 try:
                     duration_hours = float(request.POST.get('duration_hours', 0))
                     event.duration_hours = duration_hours
@@ -330,7 +367,7 @@ def export_all_events(request):
     header_fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
     
     # Заголовки
-    headers = ['Название', 'Дата', 'Тимлидер', 'Треб. волонтёров', 'Длительность (ч)', 'Факт. волонтёров']
+    headers = ['Название', 'Дата', 'Ответственный', 'Треб. волонтёров', 'Длительность (ч)', 'Факт. волонтёров']
     for col_num, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col_num, value=header)
         cell.font = header_font
@@ -651,7 +688,7 @@ def convert_pptx_to_png(pptx_path):
         main_font = ImageFont.truetype(sans_italic, size=16 * scale)
         main_width = 600 * scale
         main_x = width - main_width - 40 * scale
-        main_y = name_y + name_h + 40 * scale
+        main_y = 750 * scale  # Фиксированная позиция, не зависящая от размера имени
         line_h = main_font.getbbox('Ag')[3] - main_font.getbbox('Ag')[1] + 8 * scale
         for i, line in enumerate(lines):
             words = line.split()
@@ -695,7 +732,7 @@ def convert_pptx_to_png(pptx_path):
         total_h = hh + gap + hlh
         base_y = center_y - total_h // 2 - 10 * scale
         hours_x = margin + (section_w - hw) // 2
-        hours_y = base_y
+        hours_y = sign_y - 40 * scale  # Поднимаем часы выше имени директора
         adraw.text((hours_x, hours_y), hours_text, font=impact_25, fill=(255,255,255,255))
         line_y = hours_y + hh + gap
         line_x1 = margin + (section_w - line_w) // 2
@@ -705,14 +742,15 @@ def convert_pptx_to_png(pptx_path):
         hlabel_y = line_y + gap_hours
         adraw.text((hlabel_x, hlabel_y), hlabel, font=impact_18, fill=(255,255,255,255))
 
-        # Центральная секция: печать (штамп чуть выше, овальный)
+        # Центральная секция: печать (штамп точно на белом круге)
         if os.path.exists(stamp_path):
             stamp = PILImage.open(stamp_path).convert('RGBA')
-            stamp_w = int(section_w)
-            stamp_h = int(arrow_height * 0.95)
-            stamp = stamp.resize((stamp_w, stamp_h), PILImage.LANCZOS)
-            stamp_x = margin + section_w + gap
-            stamp_y = center_y - stamp_h // 2
+            # Делаем печать круглой и меньшего размера для точного позиционирования
+            stamp_size = int(section_w * 0.8)  # Уменьшаем размер для точного попадания в круг
+            stamp = stamp.resize((stamp_size, stamp_size), PILImage.LANCZOS)
+            # Позиционируем чуть правее центра секции (на белом круге)
+            stamp_x = margin + section_w + gap + (section_w - stamp_size) // 2 + 30 * scale
+            stamp_y = center_y - stamp_size // 2
             arrow.paste(stamp, (stamp_x, stamp_y), stamp)
 
         # Правая секция: крупный текст, увеличиваем размер имени директора и слова "director"
@@ -937,6 +975,9 @@ def generate_certificate(request, participant_id):
         event_date = event.date.strftime("%d.%m.%Y")
         leader_name = f"{event.created_by.first_name} {event.created_by.last_name}" if event.created_by else None
         file_data = create_certificate_pdf(full_name, hours, event_name, event_date, leader_name)
+        if file_data is None:
+            from django.shortcuts import redirect
+            return redirect('home')
         participant.hours_awarded = 0
         participant.save()
         filename = f"certificate_{scanner.last_name}_{event.name}.pdf"
@@ -981,6 +1022,9 @@ def generate_all_certificates(request, event_id):
                     event_date=event_date,
                     leader_name=leader_name
                 )
+                if pdf_data is None:
+                    from django.shortcuts import redirect
+                    return redirect('home')
                 
                 # Обнуляем часы сканера при получении сертификата
                 participant.hours_awarded = 0
@@ -1014,45 +1058,30 @@ def generate_scanner_certificate(request, scanner_id):
         if not participations.exists():
             messages.error(request, "Сканер еще не участвовал на мероприятиях")
             return redirect('scanner_certificates')
-        
-        # Получаем текущие часы, доступные для сертификата
         current_hours = participations.aggregate(total_hours=Sum('hours_awarded', output_field=FloatField()))['total_hours'] or 0.0
-        
         if current_hours == 0:
             messages.error(request, "У сканера нет доступных часов для получения сертификата")
             return redirect('scanner_certificates')
-        
-        # Получаем диапазон дат мероприятий
         date_range = participations.aggregate(first_event=Min('event__date'), last_event=Max('event__date'))
         first_date = date_range['first_event']
         last_date = date_range['last_event']
         period_text = f"{first_date.strftime('%d.%m.%Y')} - {last_date.strftime('%d.%m.%Y')}"
-        
-        # Формируем список мероприятий для сертификата
         events_list = [{
             'name': p.event.name,
             'date': p.event.date.strftime("%d.%m.%Y"),
             'hours': p.hours_awarded
         } for p in participations]
-        
         full_name = f"{scanner.first_name} {scanner.last_name}".upper()
         hours = round(current_hours)
-        
-        # Обновляем общее количество часов, полученных в сертификатах
         scanner.total_certificate_hours += current_hours
         scanner.save()
-        
-        # Создаем сертификат
         file_data = create_certificate_pdf(full_name, hours, period=period_text, events_list=events_list)
-        
-        # Обнуляем часы сканера при получении сертификата
+        if file_data is None:
+            return redirect('home')
         for participant in participations:
             participant.hours_awarded = 0
             participant.save()
-        
         filename = f"certificate_{scanner.last_name}_{scanner.first_name}.pdf"
-        
-        # Всегда возвращаем PDF напрямую
         response = HttpResponse(file_data, content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
@@ -1118,6 +1147,9 @@ def generate_all_scanner_certificates(request):
                     period=period_text,
                     events_list=events_list
                 )
+                if pdf_data is None:
+                    from django.shortcuts import redirect
+                    return redirect('home')
                 
                 # Обнуляем часы сканера при получении сертификата
                 for p in participations:
@@ -1139,6 +1171,9 @@ def generate_all_scanner_certificates(request):
         return response
         
     except Exception as e:
+        import traceback
+        print(f"Ошибка при генерации сертификатов: {e}")
+        print(traceback.format_exc())
         return JsonResponse({"error": str(e)}, status=400)
 
 @team_leader_required
@@ -1339,99 +1374,113 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
 
     base_dir = settings.BASE_DIR
     bg_path = os.path.join(base_dir, 'static', 'templates', 'background.png')
-    logo_path = os.path.join(base_dir, 'static', 'templates', 'image.png')
-    stamp_path = os.path.join(base_dir, 'static', 'templates', 'stamp.png')
-    impact_path = os.path.join(base_dir, 'static', 'fonts', 'IMPACT.TTF')
-    sans_italic = os.path.join(base_dir, 'static', 'fonts', 'OpenSans-Italic.ttf')
-    sans_bold_italic = os.path.join(base_dir, 'static', 'fonts', 'OpenSans-BoldItalic.ttf')
+    big_shoulders_path = os.path.join(base_dir, 'static', 'fonts', 'BigShouldersDisplay-Bold.ttf')
+    pinyon_script_path = os.path.join(base_dir, 'static', 'fonts', 'PinyonScript-Regular.ttf')
+    cooper_hewitt_path = os.path.join(base_dir, 'static', 'fonts', 'CooperHewitt-Regular.ttf')
 
-    # Увеличиваем разрешение для максимального качества
     scale = 2
     width, height = 1123 * scale, 794 * scale
-    
-    # Создаем полностью черный фон как базовый слой
+
     img = PILImage.new('RGB', (width, height), (0, 0, 0))
-    
-    # Загружаем и накладываем основной фон
-    bg = PILImage.open(bg_path).convert('RGBA').resize((width, height))
-    img.paste(bg, (0, 0), bg)
-    
-    # Создаем полупрозрачный черный слой вместо использования back_black.png
-    # Создаем новое RGBA изображение с черным цветом и прозрачностью 60%
-    overlay = PILImage.new('RGBA', (width, height), (0, 0, 0, 153))  # 153 = 60% непрозрачности
-    
-    # Накладываем полупрозрачный черный слой поверх основного фона
-    img.paste((0, 0, 0), (0, 0, width, height), overlay)
-    
+    try:
+        bg = PILImage.open(bg_path).convert('RGBA').resize((width, height))
+        img.paste(bg, (0, 0), bg)
+    except Exception as e:
+        print(f"Ошибка при загрузке фона: {e}")
+
     draw = ImageDraw.Draw(img)
 
-    # Логотип в левый нижний угол (logo_scale = 0.9)
-    logo = PILImage.open(logo_path).convert('RGBA')
-    logo_w, logo_h = logo.size
-    logo_scale = 0.9
-    logo = logo.resize((int(logo_w * logo_scale), int(logo_h * logo_scale)), PILImage.LANCZOS)
-    img.paste(logo, (40 * scale, height - logo.height - 40 * scale), logo)
-
-    # Шрифты
-    impact = ImageFont.truetype(impact_path, size=98)
-    impact_name = ImageFont.truetype(impact_path, size=128)
-    sans_bold_italic_f = ImageFont.truetype(sans_bold_italic, size=24)
-    sans_italic_f = ImageFont.truetype(sans_italic, size=18)
-    sans_italic_f_small = ImageFont.truetype(sans_italic, size=16)
-    sans_bold_italic_f_small = ImageFont.truetype(sans_bold_italic, size=18)
+    def safe_font(path, size):
+        try:
+            return ImageFont.truetype(path, size=size)
+        except:
+            return ImageFont.load_default()
 
     def get_text_size(text, font):
         bbox = font.getbbox(text)
         return bbox[2] - bbox[0], bbox[3] - bbox[1]
 
-    # CERTIFICAT
-    cert_text = "CERTIFICAT"
-    impact_cert = ImageFont.truetype(impact_path, size=int(98.3 * scale))
-    cert_w, cert_h = get_text_size(cert_text, impact_cert)
-    cert_x = (width - cert_w - 80 * scale)
-    cert_y = 70 * scale
-    draw.text((cert_x, cert_y), cert_text, font=impact_cert, fill=(255,255,255,255))
+    arial = safe_font("C:/Windows/Fonts/arial.ttf", 48 * scale)
+    arial_bold = safe_font("C:/Windows/Fonts/arialbd.ttf", 48 * scale)
+    arial_italic = safe_font("C:/Windows/Fonts/ariali.ttf", 48 * scale)
+    arial_bold_big = safe_font("C:/Windows/Fonts/arialbd.ttf", 110 * scale)
+    arial_italic_big = safe_font("C:/Windows/Fonts/ariali.ttf", 90 * scale)
+    arial_regular = safe_font("C:/Windows/Fonts/arial.ttf", 32 * scale)
+    arial_small = safe_font("C:/Windows/Fonts/arial.ttf", 24 * scale)
+    arial_bold_small = safe_font("C:/Windows/Fonts/arialbd.ttf", 32 * scale)
+    arial_italic_small = safe_font("C:/Windows/Fonts/ariali.ttf", 32 * scale)
 
-    # OF APPRECIATION
-    app_text = "OF APPRECIATION"
-    app_font = ImageFont.truetype(sans_bold_italic, size=24 * scale)
-    app_w, app_h = get_text_size(app_text, app_font)
-    app_x = (width - app_w - 85 * scale)
-    app_y = cert_y + cert_h + 40 * scale
-    draw.text((app_x, app_y), app_text, font=app_font, fill=(255,255,255,255))
+    # Certificate (Big Shoulders Display Bold)
+    try:
+        big_shoulders = ImageFont.truetype(big_shoulders_path, 150 * scale)
+    except:
+        big_shoulders = safe_font("C:/Windows/Fonts/arialbd.ttf", 150 * scale)
+    cert_text = "Certificate"
+    cert_w, cert_h = get_text_size(cert_text, big_shoulders)
+    cert_x = 80 * scale
+    cert_y = 30 * scale
+    draw.text((cert_x, cert_y), cert_text, font=big_shoulders, fill=(255,255,255,255))
 
-    # This certificate is presented to:
+    # of appreciation (Pinyon Script)
+    try:
+        pinyon_script = ImageFont.truetype(pinyon_script_path, 60 * scale)
+    except:
+        pinyon_script = safe_font("C:/Windows/Fonts/ariali.ttf", 60 * scale)
+    appr_text = "of appreciation"
+    appr_w, appr_h = get_text_size(appr_text, pinyon_script)
+    appr_x = cert_x  # align left
+    appr_y = cert_y + cert_h + 40 * scale  # move even lower
+    draw.text((appr_x, appr_y), appr_text, font=pinyon_script, fill=(255,255,255,255))
+
     pres_text = "This certificate is presented to:"
-    pres_font = ImageFont.truetype(sans_italic, size=18 * scale)
-    pres_w, pres_h = get_text_size(pres_text, pres_font)
-    pres_x = (width - pres_w - 120 * scale)
-    pres_y = app_y + app_h + 40 * scale
-    draw.text((pres_x, pres_y), pres_text, font=pres_font, fill=(255,255,255,255))
+    pres_w, pres_h = get_text_size(pres_text, arial_bold_small)
+    pres_x = cert_x
+    pres_y = appr_y + appr_h + 30 * scale
+    draw.text((pres_x, pres_y), pres_text, font=arial_bold_small, fill=(255,255,255,255))
 
-    # NAME
-    name_text = name
-    name_w, name_h = get_text_size(name_text, impact_name)
-    name_x = (width - name_w - 120 * scale)
-    name_y = pres_y + pres_h + 10 * scale
-    draw.text((name_x, name_y), name_text, font=impact_name, fill=(76,175,80,255))
+    # Имя и фамилия (Pinyon Script) с автоматическим уменьшением размера
+    def capitalize_name(name):
+        return ' '.join([part.capitalize() for part in name.split()])
 
-    # Определяем годы для текста благодарности
-    years_text = "2024 and 2025"  # По умолчанию
+    name_text = capitalize_name(name)
     
-    # Если есть список мероприятий, извлекаем годы из них
+    # Максимальная ширина для имени (чтобы помещалось в одну строку)
+    max_name_width = width - cert_x - 100 * scale  # оставляем отступ справа
+    
+    # Начальный размер шрифта
+    name_font_size = 60 * scale
+    min_font_size = 30 * scale  # минимальный размер
+    
+    # Подбираем размер шрифта чтобы имя поместилось в одну строку
+    while name_font_size >= min_font_size:
+        try:
+            current_name_font = ImageFont.truetype(pinyon_script_path, name_font_size)
+        except:
+            current_name_font = safe_font("C:/Windows/Fonts/ariali.ttf", name_font_size)
+        
+        name_w, name_h = get_text_size(name_text, current_name_font)
+        
+        if name_w <= max_name_width:
+            break
+        
+        name_font_size -= 2 * scale  # уменьшаем размер
+    
+    # Используем подобранный шрифт
+    name_x = cert_x
+    name_y = pres_y + pres_h + 10 * scale
+    draw.text((name_x, name_y), name_text, font=current_name_font, fill=(255,255,255,255))
+
+    years_text = ""
     if events_list:
         years = set()
         for event in events_list:
             if 'date' in event:
                 try:
-                    # Извлекаем год из даты в формате DD.MM.YYYY
                     date_parts = event['date'].split('.')
                     if len(date_parts) == 3:
-                        years.add(date_parts[2])  # Год - последняя часть
+                        years.add(date_parts[2])
                 except:
                     pass
-        
-        # Если нашли годы, формируем строку
         if years:
             sorted_years = sorted(years)
             if len(sorted_years) == 1:
@@ -1439,29 +1488,21 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
             elif len(sorted_years) == 2:
                 years_text = f"{sorted_years[0]} and {sorted_years[1]}"
             else:
-                # Для трех и более лет используем перечисление с запятыми и "and" перед последним
                 years_text = ", ".join(sorted_years[:-1]) + " and " + sorted_years[-1]
-    
-    # Если передан период, извлекаем годы из него
     elif period:
         try:
-            # Предполагаем, что период имеет формат "DD.MM.YYYY - DD.MM.YYYY"
             period_parts = period.split(' - ')
             if len(period_parts) == 2:
                 start_year = period_parts[0].split('.')[-1]
                 end_year = period_parts[1].split('.')[-1]
-                
                 if start_year == end_year:
                     years_text = start_year
                 else:
                     years_text = f"{start_year} and {end_year}"
         except:
             pass
-    
-    # Если передана одиночная дата мероприятия
     elif event_date:
         try:
-            # Предполагаем формат даты "DD.MM.YYYY" или объект datetime
             if isinstance(event_date, str):
                 year = event_date.split('.')[-1]
                 years_text = year
@@ -1470,154 +1511,75 @@ def create_certificate_pdf(name, hours, event_name=None, event_date=None, leader
         except:
             pass
 
-    # Блок благодарности с динамическими годами
-    lines = [
-        "We, the Ticketon company, would like to sincerely express our gratitude and",
-        "appreciation towards your incredible work and support in organizing",
-        f"our events in {years_text}. You played important role in organization of",
-        "each event. We hope to see you again in upcoming events!"
+    try:
+        gratitude_font = ImageFont.truetype(cooper_hewitt_path, int(16 * scale))
+    except:
+        gratitude_font = safe_font("C:/Windows/Fonts/arial.ttf", int(16 * scale))
+
+    gratitude_lines = [
+        f"We, the Ticketon company, would like to sincerely express our gratitude and appreciation",
+        f"towards your incredible work and support in organizing our events in {years_text}.",
+        "You played important role in organization of each event.",
+        "We hope to see you again in upcoming events!"
     ]
-    main_font = ImageFont.truetype(sans_italic, size=16 * scale)
-    main_width = 600 * scale
-    main_x = width - main_width - 40 * scale
-    main_y = name_y + name_h + 40 * scale
-    line_h = main_font.getbbox('Ag')[3] - main_font.getbbox('Ag')[1] + 8 * scale
-    for i, line in enumerate(lines):
-        words = line.split()
-        if len(words) == 1:
-            draw.text((main_x, main_y + i * line_h), line, font=main_font, fill=(255,255,255,255))
-            continue
-        total_w = sum(get_text_size(w, main_font)[0] for w in words)
-        space_w = int((main_width - total_w) / max(1, (len(words) - 1) * 2))
-        x = main_x
-        for j, word in enumerate(words):
-            draw.text((x, main_y + i * line_h), word, font=main_font, fill=(255,255,255,255))
-            w, _ = get_text_size(word, main_font)
-            x += w + space_w
+    grat_x = cert_x
+    grat_y = name_y + name_h + 40 * scale
+    for i, line in enumerate(gratitude_lines):
+        draw.text((grat_x, grat_y + i * int(24 * scale)), line, font=gratitude_font, fill=(255,255,255,255))
 
-    # Рисуем стрелку с остриём только слева, справа — ровно
-    arrow_w, arrow_height = 540 * scale, 110 * scale
-    arrow = PILImage.new('RGBA', (arrow_w, arrow_height), (0,0,0,0))
-    adraw = ImageDraw.Draw(arrow)
-    points = [
-        (0, arrow_height//2), (40 * scale, 0), (arrow_w, 0), (arrow_w, arrow_height), (40 * scale, arrow_height)
-    ]
-    adraw.polygon(points, fill=(76,175,80,255))
+    # Часы правее и больше, Cooper Hewitt Bold работаеееет
+    hours_text = f"{int(round(hours))} hours"
+    try:
+        cooper_hewitt_bold_path = os.path.join(base_dir, 'static', 'fonts', 'cooperhewitt-bold.ttf')
+        hours_font = ImageFont.truetype(cooper_hewitt_bold_path, int(28 * scale))
+    except:
+        hours_font = safe_font("C:/Windows/Fonts/arialbd.ttf", int(28 * scale))
+    hours_w, hours_h = get_text_size(hours_text, hours_font)
+    # Фиксированные координаты часов (не зависят от других элементов)
+    hours_x = 460 * scale  # Абсолютная фиксированная позиция по X
+    hours_y = 608 * scale  # Абсолютная фиксированная позиция по Y
+    draw.text((hours_x, hours_y), hours_text, font=hours_font, fill=(255,255,255,255))
 
-    margin = 18 * scale
-    gap = 14 * scale
-    gap_hours = 6 * scale
-    section_w = (arrow_w - 2 * margin - 2 * gap) // 3
-    center_y = arrow_height // 2
+    # Добавить штамп справа от часов, почти идеально круглый (растянуть совсем чуть-чуть)
+    try:
+        stamp_path = os.path.join(base_dir, 'static', 'templates', 'stamp.png')
+        if os.path.exists(stamp_path):
+            stamp_img = PILImage.open(stamp_path).convert('RGBA')
+            # Почти идеально круглый штамп: ширина чуть больше высоты
+            circle_diameter = 120 * scale
+            oval_width = int(circle_diameter * 1.03)  # растянуть совсем чуть-чуть
+            oval_height = circle_diameter
+            stamp_img = stamp_img.resize((oval_width, oval_height), PILImage.LANCZOS)
+            # Полностью фиксированные координаты штампа (не зависят от других элементов)
+            stamp_x = 685 * scale  # Абсолютная фиксированная позиция по X
+            stamp_y = 608 * scale   # Абсолютная фиксированная позиция по Y
+            img.paste(stamp_img, (int(stamp_x), int(stamp_y)), stamp_img)
+    except Exception as e:
+        print(f"Ошибка при добавлении штампа: {e}")
 
-    # Шрифты для стрелки
-    impact_25 = ImageFont.truetype(impact_path, size=25 * scale)
-    impact_19_9 = ImageFont.truetype(impact_path, size=int(19.9 * scale))
-    impact_18 = ImageFont.truetype(impact_path, size=18 * scale)
-
-    # Левая секция: часы
-    hours_text = f"{int(round(hours)):02d}"
-    hw, hh = get_text_size(hours_text, impact_25)
-    hlabel = "hours"
-    hlw, hlh = get_text_size(hlabel, impact_18)
-    line_w = section_w * 0.8
-    total_h = hh + gap + hlh
-    base_y = center_y - total_h // 2 - 10 * scale
-    hours_x = margin + (section_w - hw) // 2
-    hours_y = base_y
-    adraw.text((hours_x, hours_y), hours_text, font=impact_25, fill=(255,255,255,255))
-    line_y = hours_y + hh + gap
-    line_x1 = margin + (section_w - line_w) // 2
-    line_x2 = line_x1 + line_w
-    adraw.line([(line_x1, line_y), (line_x2, line_y)], fill=(255,255,255,255), width=4 * scale)
-    hlabel_x = margin + (section_w - hlw) // 2
-    hlabel_y = line_y + gap_hours
-    adraw.text((hlabel_x, hlabel_y), hlabel, font=impact_18, fill=(255,255,255,255))
-
-    # Центральная секция: печать (штамп чуть выше, овальный)
-    if os.path.exists(stamp_path):
-        stamp = PILImage.open(stamp_path).convert('RGBA')
-        stamp_w = int(section_w)
-        stamp_h = int(arrow_height * 0.95)
-        stamp = stamp.resize((stamp_w, stamp_h), PILImage.LANCZOS)
-        stamp_x = margin + section_w + gap
-        stamp_y = center_y - stamp_h // 2
-        arrow.paste(stamp, (stamp_x, stamp_y), stamp)
-
-    # Правая секция: крупный текст, увеличиваем размер имени директора и слова "director"
-    sign_text = "Torgunakova V. K."
-    dir_text = "director"
-    max_width = section_w - 2 * int(5 * scale)  # Уменьшаем внутренний отступ для большего текста
-    
-    # Увеличиваем базовый размер шрифта для имени директора и слова "director"
-    base_sign_font_size = int(25 * 1.5 * scale)  # Было 20.9 * 1.5
-    base_dir_font_size = int(22 * 1.5 * scale)   # Было 19 * 1.5
-    
-    min_font_size = int(15 * scale)  # Увеличиваем минимальный размер шрифта
-    sign_font_size = base_sign_font_size
-    dir_font_size = base_dir_font_size
-    
-    while True:
-        sign_font = ImageFont.truetype(impact_path, size=sign_font_size)
-        dir_font = ImageFont.truetype(impact_path, size=dir_font_size)
-        sign_w, sign_h = get_text_size(sign_text, sign_font)
-        dir_w, dir_h = get_text_size(dir_text, dir_font)
-        if sign_w <= max_width and dir_w <= max_width:
-            break
-        sign_font_size -= 2
-        dir_font_size -= 2
-        if sign_font_size < min_font_size or dir_font_size < min_font_size:
-            sign_font_size = dir_font_size = min_font_size
-            sign_font = ImageFont.truetype(impact_path, size=sign_font_size)
-            dir_font = ImageFont.truetype(impact_path, size=dir_font_size)
-            sign_w, sign_h = get_text_size(sign_text, sign_font)
-            dir_w, dir_h = get_text_size(dir_text, dir_font)
-            break
-    
-    right_section_x = margin + 2 * section_w + 2 * gap
-    right_section_y = margin
-    sign_x = right_section_x + (section_w - sign_w) // 2
-    sign_y = right_section_y + 10 * scale
-    dir_x = right_section_x + (section_w - dir_w) // 2
-    dir_y = sign_y + sign_h + int(0.2 * sign_h)  # Уменьшаем расстояние между именем и должностью
-    
-    # Рисуем имя и должность директора
-    adraw.text((sign_x, sign_y), sign_text, font=sign_font, fill=(0,0,0,255))
-    adraw.text((dir_x, dir_y), dir_text, font=dir_font, fill=(255,255,255,255))
-
-    arrow_x = width - arrow_w
-    arrow_y = height - arrow_height - 60 * scale
-    img.paste(arrow, (arrow_x, arrow_y), arrow)
-
-    temp_dir = tempfile.mkdtemp()
-    temp_img_path = os.path.join(temp_dir, 'cert.png')
-    img.save(temp_img_path, 'PNG')
-
-    # Использование ReportLab для создания PDF без артефактов
-    pdf_width, pdf_height = 1123, 794  # Размеры PDF в точках
-    temp_pdf_path = os.path.join(temp_dir, 'certificate.pdf')
-    
-    # Создаем PDF с чистым черным фоном, без артефактов
-    c = canvas.Canvas(temp_pdf_path, pagesize=(pdf_width, pdf_height))
-    
-    # Заливаем весь PDF черным цветом (без границ)
-    c.setFillColor((0, 0, 0))
-    c.rect(0, 0, pdf_width, pdf_height, fill=1, stroke=0)
-    
-    # Добавляем изображение сертификата (без верхней черной линии)
-    c.drawImage(temp_img_path, 0, 0, width=pdf_width, height=pdf_height)
-    
-    c.save()
-
-    with open(temp_pdf_path, 'rb') as f:
-        pdf_data = f.read()
-    
-    # Очистка временных файлов
-    os.remove(temp_img_path)
-    os.remove(temp_pdf_path)
-    os.rmdir(temp_dir)
-    
-    return pdf_data
+    try:
+        temp_dir = tempfile.mkdtemp()
+        temp_img_path = os.path.join(temp_dir, 'cert.png')
+        img.save(temp_img_path, 'PNG')
+        pdf_width, pdf_height = 1123, 794
+        temp_pdf_path = os.path.join(temp_dir, 'certificate.pdf')
+        c = canvas.Canvas(temp_pdf_path, pagesize=(pdf_width, pdf_height))
+        c.drawImage(temp_img_path, 0, 0, width=pdf_width, height=pdf_height)
+        c.save()
+        with open(temp_pdf_path, 'rb') as f:
+            pdf_data = f.read()
+        try:
+            os.remove(temp_img_path)
+            os.remove(temp_pdf_path)
+            os.rmdir(temp_dir)
+        except:
+            pass
+        return pdf_data
+    except Exception as e:
+        import traceback
+        print(f"Ошибка при создании PDF: {e}")
+        print(traceback.format_exc())
+        return None
 
 def convert_pptx_to_pdf(pptx_path):
     """
@@ -1704,317 +1666,24 @@ def clear_scanners_cache():
     # Очищаем кеш по префиксу
     cache.clear()
 
-@team_leader_required
-def purge_settings(request):
-    """Страница настроек автоматического удаления мероприятий"""
-    purge_config, created = PurgeSettings.objects.get_or_create(
-        defaults={
-            'purge_date': timezone.datetime(timezone.now().year, 9, 1).date(),
-            'notification_days_before': 7,
-            'active': True,
-            'updated_by': request.user
-        }
-    )
-    
-    if request.method == 'POST':
-        action = request.POST.get('action')
-        
-        # Обновление настроек
-        if action == 'update':
-            try:
-                # Получаем и валидируем дату удаления
-                purge_month = int(request.POST.get('purge_month', 9))
-                purge_day = int(request.POST.get('purge_day', 1))
-                
-                # Проверяем валидность даты
-                if purge_month < 1 or purge_month > 12 or purge_day < 1 or purge_day > 31:
-                    messages.error(request, 'Некорректная дата удаления')
-                    return redirect('purge_settings')
-                
-                # Создаем дату удаления
-                purge_date = timezone.datetime(timezone.now().year, purge_month, purge_day).date()
-                
-                # Получаем и валидируем дни для уведомлений
-                notification_days = int(request.POST.get('notification_days', 7))
-                if notification_days < 1 or notification_days > 30:
-                    messages.error(request, 'Количество дней для уведомления должно быть от 1 до 30')
-                    return redirect('purge_settings')
-                
-                # Получаем статус активности
-                active = request.POST.get('active') == 'on'
-                
-                # Обновляем настройки
-                purge_config.purge_date = purge_date
-                purge_config.notification_days_before = notification_days
-                purge_config.active = active
-                purge_config.updated_by = request.user
-                purge_config.updated_at = timezone.now()
-                purge_config.save()
-                
-                messages.success(request, 'Настройки успешно обновлены')
-            except Exception as e:
-                messages.error(request, f'Ошибка при обновлении настроек: {str(e)}')
-        
-        return redirect('purge_settings')
-    
-    # Рассчитываем дату следующего удаления
-    current_date = timezone.now().date()
-    purge_month_day = purge_config.purge_date.strftime('%m-%d')
-    next_purge_year = current_date.year
-    
-    # Если текущая дата после даты удаления в этом году, то следующее удаление в следующем году
-    next_purge_date_str = f"{next_purge_year}-{purge_month_day}"
-    next_purge_date = datetime.strptime(next_purge_date_str, '%Y-%m-%d').date()
-    
-    if current_date > next_purge_date:
-        next_purge_year += 1
-        next_purge_date_str = f"{next_purge_year}-{purge_month_day}"
-        next_purge_date = datetime.strptime(next_purge_date_str, '%Y-%m-%d').date()
-    
-    # Рассчитываем дату уведомления
-    notification_date = next_purge_date - timedelta(days=purge_config.notification_days_before)
-    
-    # Получаем количество мероприятий, которые будут удалены
-    one_year_ago = current_date - timedelta(days=365)
-    events_to_delete_count = Event.objects.filter(date__lt=one_year_ago).count()
-    
-    # Получаем последние логи уведомлений
-    recent_logs = NotificationLog.objects.filter(is_test=False).order_by('-sent_at')[:5]
-    
-    return render(request, 'core/purge_settings.html', {
-        'settings': purge_config,
-        'next_purge_date': next_purge_date,
-        'notification_date': notification_date,
-        'events_to_delete_count': events_to_delete_count,
-        'recent_logs': recent_logs
-    })
-
-@admin_required
-def notification_logs(request):
-    """Страница с логами отправленных уведомлений"""
-    logs = NotificationLog.objects.all()
-    
-    # Фильтрация по типу (тестовое/системное)
-    is_test = request.GET.get('is_test')
-    if is_test == 'true':
-        logs = logs.filter(is_test=True)
-    elif is_test == 'false':
-        logs = logs.filter(is_test=False)
-    
-    # Фильтрация по способу доставки (email/telegram)
-    notification_type = request.GET.get('notification_type')
-    if notification_type:
-        logs = logs.filter(notification_type=notification_type)
-    
-    # Поиск по получателю (email или telegram_id)
-    recipient = request.GET.get('recipient', '').strip()
-    if recipient:
-        logs = logs.filter(
-            Q(recipient_email__icontains=recipient) | 
-            Q(recipient_telegram_id__icontains=recipient)
-        )
-    
-    # Пагинация
-    paginator = Paginator(logs, 20)
-    page_number = request.GET.get('page')
-    page_obj = paginator.get_page(page_number)
-    
-    context = {
-        'logs': page_obj.object_list,
-        'page_obj': page_obj,
-        'is_test': is_test,
-        'recipient': recipient,
-        'notification_type': notification_type
-    }
-    
-    return render(request, 'core/notification_logs.html', context)
-
-# Обновление команды для включения пользовательских настроек
-def update_purge_command():
-    """Обновляет команду purge_events с учетом пользовательских настроек"""
+@require_http_methods(["GET"])
+def scanner_info_api(request, scanner_id):
+    """API для получения информации о сканере в формате JSON"""
     try:
-        purge_config = PurgeSettings.objects.first()
-        if not purge_config:
-            return
+        scanner = get_object_or_404(Scanner, id=scanner_id)
         
-        # Обновляем даты в скрипте schedule_tasks.py
-        with open('schedule_tasks.py', 'r') as f:
-            content = f.read()
+        data = {
+            'success': True,
+            'first_name': scanner.first_name,
+            'last_name': scanner.last_name,
+            'email': scanner.email,
+            'total_certificate_hours': scanner.total_certificate_hours
+        }
         
-        # Получаем месяц и день из настроек
-        month = purge_config.purge_date.month
-        day = purge_config.purge_date.day
+        return JsonResponse(data)
         
-        # Заменяем дату в скрипте
-        next_year = timezone.now().year + 1
-        updated_content = re.sub(
-            r'start_date = datetime\(\d+, \d+, \d+, \d+, \d+, \d+\)',
-            f'start_date = datetime({next_year}, {month}, {day}, 2, 0, 0)',
-            content
-        )
-        
-        with open('schedule_tasks.py', 'w') as f:
-            f.write(updated_content)
-        
-        return True
     except Exception as e:
-        print(f"Ошибка при обновлении команды: {e}")
-        return False
-
-@team_leader_required
-def send_test_notification(request):
-    """Отдельная страница для отправки тестовых уведомлений"""
-    if request.method == 'POST':
-        # Получаем настройки удаления
-        purge_settings, created = PurgeSettings.objects.get_or_create(
-            defaults={
-                'purge_date': timezone.datetime(timezone.now().year, 7, 13).date(),  # 13 июля
-                'notification_days_before': 7,
-                'active': True,
-                'updated_by': request.user
-            }
-        )
-        
-        # Рассчитываем дату следующего удаления
-        current_date = timezone.now().date()
-        purge_month_day = purge_settings.purge_date.strftime('%m-%d')
-        next_purge_year = current_date.year
-        
-        # Если текущая дата после даты удаления в этом году, то следующее удаление в следующем году
-        next_purge_date_str = f"{next_purge_year}-{purge_month_day}"
-        next_purge_date = datetime.strptime(next_purge_date_str, '%Y-%m-%d').date()
-        
-        if current_date > next_purge_date:
-            next_purge_year += 1
-            next_purge_date_str = f"{next_purge_year}-{purge_month_day}"
-            next_purge_date = datetime.strptime(next_purge_date_str, '%Y-%m-%d').date()
-        
-        # Проверяем, какой тип уведомления выбран
-        notification_type = request.POST.get('notification_type', 'telegram')
-        
-        # Проверяем, есть ли указанный получатель для тестирования
-        test_recipient = request.POST.get('test_recipient', '').strip()
-        
-        # Получаем всех тимлидеров или конкретного получателя
-        if test_recipient:
-            # Отправляем одному указанному адресату
-            if notification_type == 'email':
-                recipients = [{'email': test_recipient, 'name': 'Тимлидер'}]
-            else:
-                recipients = [{'telegram_id': test_recipient, 'name': 'Тимлидер'}]
-        else:
-            # Отправляем всем тимлидерам
-            team_leaders = User.objects.filter(groups__name='Тимлидеры')
-            
-            if not team_leaders.exists():
-                messages.warning(request, 'Нет тимлидеров для отправки уведомлений')
-                return redirect('send_test_notification')
-            
-            recipients = []
-            for leader in team_leaders:
-                recipient_data = {
-                    'name': f"{leader.first_name} {leader.last_name}"
-                }
-                
-                # Ищем Telegram ID для тимлидера
-                if notification_type == 'telegram':
-                    try:
-                        team_leader = TeamLeader.objects.filter(
-                            first_name=leader.first_name,
-                            last_name=leader.last_name
-                        ).first()
-                        if team_leader and team_leader.telegram_id:
-                            recipient_data['telegram_id'] = team_leader.telegram_id
-                            recipients.append(recipient_data)
-                    except Exception as e:
-                        messages.error(request, f'Ошибка при поиске Telegram ID для {recipient_data["name"]}: {str(e)}')
-                else:
-                    if leader.email:
-                        recipient_data['email'] = leader.email
-                        recipients.append(recipient_data)
-        
-        # Проверяем, есть ли получатели
-        if not recipients:
-            if notification_type == 'telegram':
-                messages.error(request, 'Не найдены Telegram ID для отправки уведомлений')
-            else:
-                messages.error(request, 'Не найдены email-адреса для отправки уведомлений')
-            return redirect('send_test_notification')
-        
-        sent_count = 0
-        from core.utils import send_telegram_message
-        
-        for recipient in recipients:
-            # Формируем текст тестового уведомления
-            message = f"""
-            Здравствуйте, {recipient['name']}!
-
-            Это тестовое уведомление системы автоматического удаления мероприятий.
-            
-            Следующее удаление мероприятий запланировано на {next_purge_date.strftime('%d.%m.%Y')}.
-            Будут удалены мероприятия старше одного года.
-            
-            Это сообщение отправлено администратором {request.user.first_name} {request.user.last_name} для проверки работы системы уведомлений.
-
-            С уважением,
-            Команда Ticketon
-            """
-            
-            # Отправляем уведомление
-            try:
-                if notification_type == 'telegram' and 'telegram_id' in recipient:
-                    # Отправляем через Telegram
-                    success = send_telegram_message(message, [recipient['telegram_id']])
-                    
-                    if success:
-                        # Логируем отправку
-                        NotificationLog.objects.create(
-                            sent_by=request.user,
-                            recipient_telegram_id=recipient['telegram_id'],
-                            message=message,
-                            is_test=True,
-                            notification_type='telegram'
-                        )
-                        
-                        sent_count += 1
-                    else:
-                        messages.error(request, f'Не удалось отправить уведомление в Telegram для {recipient["name"]}')
-                
-                elif notification_type == 'email' and 'email' in recipient:
-                    # Отправляем через email
-                    send_mail(
-                        subject='Тестовое уведомление: система удаления мероприятий',
-                        message=message,
-                        from_email=settings.DEFAULT_FROM_EMAIL,
-                        recipient_list=[recipient['email']],
-                        fail_silently=False,
-                    )
-                    
-                    # Логируем отправку
-                    NotificationLog.objects.create(
-                        sent_by=request.user,
-                        recipient_email=recipient['email'],
-                        message=message,
-                        is_test=True,
-                        notification_type='email'
-                    )
-                    
-                    sent_count += 1
-            except Exception as e:
-                recipient_id = recipient.get('telegram_id', recipient.get('email', 'неизвестный получатель'))
-                messages.error(request, f'Ошибка при отправке уведомления на {recipient_id}: {str(e)}')
-        
-        if sent_count > 0:
-            if test_recipient:
-                messages.success(request, f'Тестовое уведомление отправлено на {test_recipient}')
-            else:
-                messages.success(request, f'Тестовые уведомления отправлены {sent_count} тимлидерам')
-        
-        return redirect('events')
-    
-    # Получаем последние отправленные уведомления
-    recent_notifications = NotificationLog.objects.filter(is_test=True)[:5]
-    
-    return render(request, 'core/send_test_notification.html', {
-        'recent_notifications': recent_notifications
-    })
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=400)

@@ -16,8 +16,12 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from core.admin import ScannerAutocomplete
+from core.views import scanner_info_api
 
 urlpatterns = [
+    path('admin/scanner-autocomplete/', ScannerAutocomplete.as_view(), name='scanner-autocomplete'),
+    path('admin/scanner-info/<int:scanner_id>/', scanner_info_api, name='scanner-info'),
     path('admin/', admin.site.urls),
     path('', include('core.urls')),
 ]

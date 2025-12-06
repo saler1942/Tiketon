@@ -10,6 +10,8 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
+# This file is part of the Freedom Ticketon project  
+  
 from pathlib import Path
 import os
 import dj_database_url
@@ -46,6 +48,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'dal',
+    'dal_select2',
     'core',
 ]
 
@@ -91,20 +95,14 @@ WSGI_APPLICATION = 'tiketon.wsgi.application'
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": BASE_DIR / "db.sqlite3",
     }
 }
 
+
 # Use PostgreSQL in production
-DATABASE_URL = os.environ.get('DATABASE_URL')
-if DATABASE_URL:
-    DATABASES['default'] = dj_database_url.config(
-        default=DATABASE_URL,
-        conn_max_age=600,
-        conn_health_checks=True,
-    )
 
 
 # Password validation
@@ -160,15 +158,6 @@ EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@freedom-ticketon.org')
 
-# Admin emails for notifications
-ADMINS = [
-    ('Admin', os.environ.get('ADMIN_EMAIL', 'admin@freedom-ticketon.org')),
-]
-
-# Telegram Bot settings
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
-TELEGRAM_CHAT_IDS = os.environ.get('TELEGRAM_CHAT_IDS', '').split(',')
-
 # Настройки кеширования
 CACHES = {
     'default': {
@@ -178,7 +167,7 @@ CACHES = {
     }
 }
 
-# Кеширование сессий
+# Кеширование сессий yes
 SESSION_ENGINE = 'django.contrib.sessions.backends.cached_db'
 
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
