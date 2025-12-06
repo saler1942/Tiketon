@@ -1,10 +1,6 @@
 {% extends 'base.html' %}
 
-<<<<<<< HEAD
-{% block title %}Мероприятия | Freedom Ticketon | TEAM SYRYM{% endblock %}
-=======
 {% block title %}Мероприятия | Freedom Ticketon | CHEESES TEAM{% endblock %}
->>>>>>> 43904bd (final)
 
 {% block content %}
 <div class="flex justify-between items-center mb-3" style="flex-wrap: wrap; gap: 1rem;">
@@ -12,19 +8,6 @@
     <div class="flex gap-2" style="flex-wrap: wrap;">
         <a href="{% url 'event_create' %}" class="btn btn-primary">Добавить мероприятие</a>
         <a href="{% url 'all_scanners_list' %}" class="btn btn-secondary">Список сканеров</a>
-<<<<<<< HEAD
-        <div class="dropdown" style="display: inline-block; position: relative;">
-            <button class="btn btn-info dropdown-btn">Система</button>
-            <div class="dropdown-content" style="position: absolute; right: 0; min-width: 220px; z-index: 10; background: white; border: 1px solid #ddd; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">
-                <a href="{% url 'purge_settings' %}" style="display: block; padding: 8px 12px; text-decoration: none; color: #333;">Настройки удаления</a>
-                <a href="{% url 'send_test_notification' %}" style="display: block; padding: 8px 12px; text-decoration: none; color: #333;">Отправить тестовое уведомление</a>
-                {% if user.is_staff %}
-                <a href="{% url 'notification_logs' %}" style="display: block; padding: 8px 12px; text-decoration: none; color: #333;">Журнал уведомлений</a>
-                {% endif %}
-            </div>
-        </div>
-=======
->>>>>>> 43904bd (final)
         {% if user.is_staff %}
         <a href="{% url 'admin:index' %}" class="btn btn-secondary">Админ-панель</a>
         {% endif %}
@@ -47,11 +30,7 @@
         <input type="date" id="date_to" name="date_to" class="form-control" value="{{ date_to|default:'' }}">
     </div>
     <div style="flex:1; min-width: 180px; width: 100%;">
-<<<<<<< HEAD
-        <label for="leader">Тимлидер</label>
-=======
         <label for="leader">Ответственный</label>
->>>>>>> 43904bd (final)
         <input type="text" id="leader" name="leader" class="form-control" value="{{ leader|default:'' }}" placeholder="Имя или фамилия">
     </div>
     <div style="min-width: 120px; width: 100%;">
@@ -68,11 +47,7 @@
                 <h2 class="mb-1" style="word-break: break-word;">{{ event.name }}</h2>
                 <div class="text-sm" style="color: #666;">
                     <div style="margin-bottom: 0.3rem;">Дата: {{ event.date }}</div>
-<<<<<<< HEAD
-                    <div style="margin-bottom: 0.3rem;">Тимлидер: {{ event.created_by.first_name }} {{ event.created_by.last_name }}</div>
-=======
                     <div style="margin-bottom: 0.3rem;">Ответственный: {{ event.created_by.first_name }} {{ event.created_by.last_name }}</div>
->>>>>>> 43904bd (final)
                     <div>Требуется сканеров: {{ event.max_scanners }}</div>
                 </div>
             </div>
@@ -102,26 +77,4 @@
     <p class="mb-3" style="color: #666;">Измените фильтры или создайте новое мероприятие</p>
 </div>
 {% endif %}
-<<<<<<< HEAD
-{% endblock %}
-
-{% block extra_js %}
-<style>
-.dropdown {
-    position: relative;
-    display: inline-block;
-}
-.dropdown-btn {
-    display: inline-block;
-    cursor: pointer;
-}
-.dropdown-content {
-    display: none;
-}
-.dropdown:hover .dropdown-content {
-    display: block;
-}
-</style>
-=======
->>>>>>> 43904bd (final)
 {% endblock %} 
